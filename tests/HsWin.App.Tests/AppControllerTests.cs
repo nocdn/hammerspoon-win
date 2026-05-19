@@ -11,6 +11,15 @@ public sealed class AppControllerTests
 
         Assert.Equal("Config reloaded", request.Text);
         Assert.Equal(AlertKind.Success, request.Kind);
-        Assert.Equal(2000, request.DurationMs);
+        Assert.Equal(ConfigReloadAlerts.ReloadedDurationMs, request.DurationMs);
+    }
+
+    [Fact]
+    public void CreateConfigReloadingAlertUsesNormalKind()
+    {
+        var request = AppController.CreateConfigReloadingAlert();
+
+        Assert.Equal("Reloading config…", request.Text);
+        Assert.Equal(AlertKind.Normal, request.Kind);
     }
 }

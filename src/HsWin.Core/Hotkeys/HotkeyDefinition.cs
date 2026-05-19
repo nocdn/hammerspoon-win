@@ -27,6 +27,21 @@ public sealed record HotkeyDefinition(HotkeyModifiers Modifiers, uint VirtualKey
             return $"{Modifiers}+{MouseButton}";
         }
 
-        return $"{Modifiers}+0x{VirtualKey:X2}";
+        return $"{Modifiers}+{FormatVirtualKey(VirtualKey)}";
+    }
+
+    private static string FormatVirtualKey(uint virtualKey)
+    {
+        if (virtualKey is >= 'A' and <= 'Z' or >= '0' and <= '9')
+        {
+            return ((char)virtualKey).ToString();
+        }
+
+        if (virtualKey is >= 0x70 and <= 0x87)
+        {
+            return $"F{virtualKey - 0x70 + 1}";
+        }
+
+        return $"0x{virtualKey:X2}";
     }
 }

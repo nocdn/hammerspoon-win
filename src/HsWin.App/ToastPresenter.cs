@@ -19,6 +19,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
     private readonly IRuntimeLogger _logger;
     private readonly DispatcherTimer _timer;
     private IToastView? _window;
+    private int _exitGeneration;
     private bool _disposed;
 
     public ToastPresenter()
@@ -128,7 +129,14 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         }
 
         var window = _window ??= _createWindow();
-        MoveOffscreen(window);
+        CancelExitAndReset(window);
+
+        var wasOnScreen = IsPositionedOnScreen(window);
+        if (!wasOnScreen)
+        {
+            MoveOffscreen(window);
+        }
+
         var movedAt = Stopwatch.GetTimestamp();
         window.UpdateRequest(request);
         var updatedAt = Stopwatch.GetTimestamp();
@@ -147,7 +155,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         StartTimer(request.DurationMs);
 
         _logger.Info(
-            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' alreadyVisible={wasVisible} " +
+            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' alreadyVisible={wasVisible} wasOnScreen={wasOnScreen} " +
             $"moveMs={ElapsedMs(startedAt, movedAt):F3} updateMs={ElapsedMs(movedAt, updatedAt):F3} " +
             $"showMs={ElapsedMs(updatedAt, shownAt):F3} layoutMs={ElapsedMs(shownAt, layoutAt):F3} " +
             $"positionMs={ElapsedMs(layoutAt, positionedAt):F3} totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
@@ -161,7 +169,13 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         }
 
         StopTimer();
-        _window?.Close();
+        if (_window is not null)
+        {
+            _exitGeneration++;
+            _window.CancelExitAnimation();
+            _window.Close();
+        }
+
         _window = null;
         _timer.Tick -= HideTimerTick;
         _disposed = true;
@@ -170,11 +184,41 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
     private void HideCurrentToast()
     {
         StopTimer();
-        if (_window is not null)
+        if (_window is null)
         {
-            MoveOffscreen(_window);
+            return;
         }
+
+        if (!IsPositionedOnScreen(_window))
+        {
+            CancelExitAndReset(_window);
+            MoveOffscreen(_window);
+            return;
+        }
+
+        var window = _window;
+        var generation = ++_exitGeneration;
+        window.BeginExitAnimation(() =>
+        {
+            if (_disposed || !ReferenceEquals(_window, window) || generation != _exitGeneration)
+            {
+                return;
+            }
+
+            MoveOffscreen(window);
+            window.PrepareForShow();
+        });
     }
+
+    private void CancelExitAndReset(IToastView window)
+    {
+        _exitGeneration++;
+        window.CancelExitAnimation();
+        window.PrepareForShow();
+    }
+
+    private static bool IsPositionedOnScreen(IToastView window) =>
+        window.Left > HiddenWindowCoordinate + 1_000_000;
 
     private void HideTimerTick(object? sender, EventArgs e)
     {

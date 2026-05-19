@@ -2,7 +2,7 @@
 
 Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HsWin\config.js`, and exposes a frozen `hs` global plus `console` logging.
 
-Reload the config from the tray menu at any time. Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, rotates the config console log file, and shows a `Config reloaded` success toast when it completes.
+Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, and rotates the config console log file.
 
 ## Current API
 

@@ -173,5 +173,18 @@ public sealed class ToastPresenterTests
         {
             Requests.Add(request);
         }
+
+        public void BeginExitAnimation(Action onComplete)
+        {
+            onComplete();
+        }
+
+        public void CancelExitAnimation()
+        {
+        }
+
+        public void PrepareForShow()
+        {
+        }
     }
 }

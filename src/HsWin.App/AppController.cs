@@ -11,7 +11,9 @@ using HsWin.App.Keyboard;
 using HsWin.App.Media;
 using HsWin.App.Shell;
 using HsWin.App.Timers;
+using System.Diagnostics;
 using System.Reflection;
+using System.Windows.Threading;
 using WpfApplication = System.Windows.Application;
 
 namespace HsWin.App;
@@ -32,7 +34,10 @@ internal sealed class AppController : IDisposable
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
     private readonly TrayIconService _trayIconService;
+    private readonly Dispatcher _dispatcher;
+    private readonly object _scriptReloadGate = new();
 
+    private int _reloadGeneration;
     private bool _disposed;
 
     public AppController()
@@ -65,6 +70,7 @@ internal sealed class AppController : IDisposable
             Logger = _logger
         });
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
+        _dispatcher = WpfApplication.Current.Dispatcher;
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,
             reloadConfig: ReloadConfig,
@@ -112,19 +118,67 @@ internal sealed class AppController : IDisposable
 
     public void ReloadConfig()
     {
-        try
+        var generation = Interlocked.Increment(ref _reloadGeneration);
+        var startedAt = Stopwatch.GetTimestamp();
+        _logger.Info("Reload Config requested.");
+        _toastPresenter.Show(ConfigReloadAlerts.CreateReloadingAlert());
+
+        Task.Run(() =>
         {
-            _logger.Info("Reload Config requested.");
-            _configFileService.EnsureConfigFile();
-            _scriptRuntime.ReloadFromFile(_configFileService.ConfigFilePath);
-            _logger.Info($"Config reloaded. Console log: {_scriptConsoleLogger.CurrentLogFilePath}");
-            _toastPresenter.Show(CreateConfigReloadedAlert());
-        }
-        catch (Exception exception)
+            Exception? failure = null;
+            var superseded = false;
+            try
+            {
+                _configFileService.EnsureConfigFile();
+                var configPath = _configFileService.ConfigFilePath;
+                lock (_scriptReloadGate)
+                {
+                    if (generation != Volatile.Read(ref _reloadGeneration) || _disposed)
+                    {
+                        superseded = true;
+                    }
+                    else
+                    {
+                        _scriptRuntime.ReloadFromFile(configPath);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            if (superseded)
+            {
+                return;
+            }
+
+            var remainingReloadingTime = TimeSpan.FromMilliseconds(ConfigReloadAlerts.MinimumReloadingVisibleMs) - Stopwatch.GetElapsedTime(startedAt);
+            if (remainingReloadingTime > TimeSpan.Zero)
+            {
+                Thread.Sleep(remainingReloadingTime);
+            }
+
+            _dispatcher.BeginInvoke(() => CompleteReloadOnDispatcher(generation, failure));
+        });
+    }
+
+    private void CompleteReloadOnDispatcher(int generation, Exception? failure)
+    {
+        if (_disposed || generation != Volatile.Read(ref _reloadGeneration))
         {
-            _logger.Error("Config reload failed.", exception);
-            _toastPresenter.Show(AlertRequest.Create($"Config error: {exception.Message}", AlertKind.Error, 7000));
+            return;
         }
+
+        if (failure is not null)
+        {
+            _logger.Error("Config reload failed.", failure);
+            _toastPresenter.Show(ConfigReloadAlerts.CreateReloadFailedAlert(failure));
+            return;
+        }
+
+        _logger.Info($"Config reloaded. Console log: {_scriptConsoleLogger.CurrentLogFilePath}");
+        _toastPresenter.Show(ConfigReloadAlerts.CreateReloadedAlert());
     }
 
     public void Dispose()
@@ -134,9 +188,16 @@ internal sealed class AppController : IDisposable
             return;
         }
 
+        Interlocked.Increment(ref _reloadGeneration);
+
         _trayIconService.Dispose();
         _logger.Info("Tray icon disposed.");
-        _scriptRuntime.Dispose();
+
+        lock (_scriptReloadGate)
+        {
+            _scriptRuntime.Dispose();
+        }
+
         _logger.Info("Script runtime disposed.");
         _hotkeyService.Dispose();
         _logger.Info("Hotkey service disposed.");
@@ -168,10 +229,9 @@ internal sealed class AppController : IDisposable
         WpfApplication.Current.Shutdown();
     }
 
-    internal static AlertRequest CreateConfigReloadedAlert()
-    {
-        return AlertRequest.Create("Config reloaded", AlertKind.Success, 2000);
-    }
+    internal static AlertRequest CreateConfigReloadedAlert() => ConfigReloadAlerts.CreateReloadedAlert();
+
+    internal static AlertRequest CreateConfigReloadingAlert() => ConfigReloadAlerts.CreateReloadingAlert();
 
     private static string ResolveExecutablePath()
     {

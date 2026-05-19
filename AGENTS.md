@@ -12,11 +12,12 @@
 - Prefer small composable services over large app-wide classes.
 - Keep the JavaScript API Hammerspoon-like where it makes sense, using the `hs` global.
 - Runtime diagnostics live under `%APPDATA%\HsWin\runtime-logs`; JavaScript `console.*` output lives under `%APPDATA%\HsWin\config-logs`.
-- Build and test before handing work back:
-  - Kill any currently running `Hammerspoon (Windows Edition)` or `HsWin.App` instances.
-  - `dotnet build HsWin.slnx`
-  - `dotnet test HsWin.slnx`
-  - If build and tests pass after code changes, create the installer with `.\scripts\Build-Installer.ps1`.
-  - Launch the generated installer from `artifacts\installer` for manual testing instead of starting the app with `dotnet run`.
+- **After every code change**, before handing work back, run this full verification loop (do not skip steps):
+  1. **Kill** any running `Hammerspoon (Windows Edition)` or `HsWin.App` instances so the old build is not left running.
+  2. **Build:** `dotnet build HsWin.slnx`
+  3. **Test:** `dotnet test HsWin.slnx`
+  4. **Installer:** `.\scripts\Build-Installer.ps1` (only if build and tests pass).
+  5. **Launch for manual test:** start `artifacts\installer\hswin-x64-setup.exe` for the user to install and try the change. Do **not** use `dotnet run` as the primary handoff.
+  This loop applies to all app/UI changes the user will want to see in the running product—not only release-sized work.
 - The installer uses Inno Setup, so `ISCC.exe` must be installed or `INNO_SETUP_ISCC` must point to it.
 - GitHub Actions release publishing lives in `.github/workflows/release.yml`; releases are normal non-prerelease releases, tagged with the Actions run number.

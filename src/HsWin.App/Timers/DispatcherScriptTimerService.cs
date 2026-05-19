@@ -15,17 +15,29 @@ internal sealed class DispatcherScriptTimerService : IScriptTimerService
     public IDisposable DoAfter(int delayMs, Action callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
+
+        if (!_dispatcher.CheckAccess())
+        {
+            return _dispatcher.Invoke(() => DoAfter(delayMs, callback));
+        }
+
         var timer = CreateTimer(delayMs, callback, repeats: false);
         timer.Start();
-        return new TimerHandle(timer);
+        return new TimerHandle(_dispatcher, timer);
     }
 
     public IDisposable DoEvery(int intervalMs, Action callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
+
+        if (!_dispatcher.CheckAccess())
+        {
+            return _dispatcher.Invoke(() => DoEvery(intervalMs, callback));
+        }
+
         var timer = CreateTimer(intervalMs, callback, repeats: true);
         timer.Start();
-        return new TimerHandle(timer);
+        return new TimerHandle(_dispatcher, timer);
     }
 
     private DispatcherTimer CreateTimer(int intervalMs, Action callback, bool repeats)
@@ -55,15 +67,33 @@ internal sealed class DispatcherScriptTimerService : IScriptTimerService
 
     private sealed class TimerHandle : IDisposable
     {
+        private readonly Dispatcher _dispatcher;
         private readonly DispatcherTimer _timer;
         private bool _disposed;
 
-        public TimerHandle(DispatcherTimer timer)
+        public TimerHandle(Dispatcher dispatcher, DispatcherTimer timer)
         {
+            _dispatcher = dispatcher;
             _timer = timer;
         }
 
         public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (_dispatcher.CheckAccess())
+            {
+                StopTimer();
+                return;
+            }
+
+            _dispatcher.Invoke(StopTimer);
+        }
+
+        private void StopTimer()
         {
             if (_disposed)
             {

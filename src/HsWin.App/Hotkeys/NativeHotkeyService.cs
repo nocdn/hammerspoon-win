@@ -51,7 +51,11 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
 
         if (!User32.RegisterHotKey(_window.Handle, id, modifierFlags, hotkey.VirtualKey))
         {
-            var exception = new Win32Exception(Marshal.GetLastPInvokeError(), $"Could not register hotkey {hotkey}.");
+            var errorCode = Marshal.GetLastPInvokeError();
+            var message = errorCode == 1408
+                ? $"Hotkey already in use: {hotkey}."
+                : $"Could not register hotkey {hotkey}.";
+            var exception = new Win32Exception(errorCode, message);
             _logger.Error($"Hotkey registration failed for id={id}.", exception);
             throw exception;
         }

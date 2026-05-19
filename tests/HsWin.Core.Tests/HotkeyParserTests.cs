@@ -13,6 +13,16 @@ public sealed class HotkeyParserTests
         Assert.Equal((uint)'R', definition.VirtualKey);
     }
 
+    [Fact]
+    public void DefinitionToStringUsesReadableKeyboardKeyNames()
+    {
+        var letter = HotkeyDefinition.CreateKeyboard(HotkeyModifiers.Control | HotkeyModifiers.Alt, 'R');
+        var function = HotkeyDefinition.CreateKeyboard(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x7B);
+
+        Assert.Equal("Alt, Control+R", letter.ToString());
+        Assert.Equal("Alt, Control+F12", function.ToString());
+    }
+
     [Theory]
     [InlineData("command", HotkeyModifiers.Win)]
     [InlineData("cmd", HotkeyModifiers.Win)]

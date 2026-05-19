@@ -2,6 +2,7 @@ using HsWin.Core.Alerts;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using MediaBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
@@ -34,6 +35,12 @@ internal interface IToastView
     void UpdateLayout();
 
     void UpdateRequest(AlertRequest request);
+
+    void BeginExitAnimation(Action onComplete);
+
+    void CancelExitAnimation();
+
+    void PrepareForShow();
 }
 
 internal sealed class ToastWindow : Window, IToastView
@@ -43,7 +50,11 @@ internal sealed class ToastWindow : Window, IToastView
     private static readonly MediaBrush ErrorBrush = CreateFrozenBrush(WpfColor.FromRgb(242, 20, 26));
     private static readonly MediaBrush SuccessBrush = CreateFrozenBrush(WpfColor.FromRgb(22, 163, 74));
     private static readonly WpfFontFamily TextFontFamily = new("Segoe UI");
+    private static readonly DropShadowEffect PillShadow = CreatePillShadow();
 
+    private readonly BlurEffect _exitBlur;
+    private readonly UIElement _exitTarget;
+    private readonly ToastExitAnimator _exitAnimator;
     private readonly PillBorder _border;
     private readonly Ellipse _dot;
     private readonly TextBlock _text;
@@ -76,12 +87,29 @@ internal sealed class ToastWindow : Window, IToastView
         _border = new PillBorder
         {
             Background = WhiteBrush,
+            Effect = PillShadow,
             Child = panel
         };
-        Content = _border;
+
+        _exitBlur = new BlurEffect { Radius = 0 };
+        _exitTarget = new Border { Effect = _exitBlur, Child = _border };
+        _exitAnimator = new ToastExitAnimator(_exitTarget, _exitBlur);
+
+        var inset = ToastStyleMetrics.ShadowInset;
+        Content = new Grid
+        {
+            Margin = new Thickness(inset),
+            Children = { _exitTarget }
+        };
     }
 
     public Visual PlacementVisual => this;
+
+    public void BeginExitAnimation(Action onComplete) => _exitAnimator.Begin(onComplete);
+
+    public void CancelExitAnimation() => _exitAnimator.Cancel();
+
+    public void PrepareForShow() => _exitAnimator.PrepareForShow();
 
     public void UpdateRequest(AlertRequest request)
     {
@@ -127,6 +155,8 @@ internal sealed class ToastWindow : Window, IToastView
             FontSize = ToastStyleMetrics.TextFontSize,
             FontWeight = ToastStyleMetrics.TextFontWeight,
             Foreground = TextBrush,
+            MaxWidth = ToastStyleMetrics.TextMaxWidth,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
         };
     }
@@ -136,6 +166,21 @@ internal sealed class ToastWindow : Window, IToastView
         var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
+    }
+
+    private static DropShadowEffect CreatePillShadow()
+    {
+        var effect = new DropShadowEffect
+        {
+            Color = WpfColor.FromRgb(0, 0, 0),
+            Opacity = ToastStyleMetrics.ShadowOpacity,
+            BlurRadius = ToastStyleMetrics.ShadowBlurRadius,
+            ShadowDepth = ToastStyleMetrics.ShadowDepth,
+            Direction = ToastStyleMetrics.ShadowDirection,
+            RenderingBias = RenderingBias.Quality,
+        };
+        effect.Freeze();
+        return effect;
     }
 
     private sealed class PillBorder : Border

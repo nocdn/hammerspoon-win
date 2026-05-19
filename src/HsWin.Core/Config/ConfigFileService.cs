@@ -108,7 +108,7 @@ public sealed class ConfigFileService
         apex.refresh();
         hs.timer.doEvery(1000, () => apex.refresh());
 
-        hs.hotkey.bind(["ctrl", "alt"], "R", () => {
+        hs.hotkey.bind(["ctrl", "alt", "shift"], "F12", () => {
           const isRunning = apex.refresh();
 
           hs.alert.show(
