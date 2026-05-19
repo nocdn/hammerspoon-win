@@ -11,14 +11,39 @@ using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace HsWin.App;
 
-internal sealed class ToastWindow : Window
+internal interface IToastView
+{
+    double ActualHeight { get; }
+
+    double ActualWidth { get; }
+
+    bool IsVisible { get; }
+
+    double Left { get; set; }
+
+    double Top { get; set; }
+
+    Visual PlacementVisual { get; }
+
+    void Close();
+
+    void Hide();
+
+    void Show();
+
+    void UpdateLayout();
+
+    void UpdateRequest(AlertRequest request);
+}
+
+internal sealed class ToastWindow : Window, IToastView
 {
     private static readonly MediaBrush WhiteBrush = WpfBrushes.White;
     private static readonly MediaBrush TextBrush = WpfBrushes.Black;
     private static readonly MediaBrush ErrorBrush = new SolidColorBrush(WpfColor.FromRgb(242, 20, 26));
     private static readonly MediaBrush SuccessBrush = new SolidColorBrush(WpfColor.FromRgb(22, 163, 74));
 
-    public ToastWindow(AlertRequest request)
+    public ToastWindow()
     {
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -31,6 +56,12 @@ internal sealed class ToastWindow : Window
         Focusable = false;
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
+    }
+
+    public Visual PlacementVisual => this;
+
+    public void UpdateRequest(AlertRequest request)
+    {
         Content = CreateContent(request);
     }
 

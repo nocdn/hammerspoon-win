@@ -1,11 +1,14 @@
 using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
+using HsWin.Core.Audio;
+using HsWin.Core.Clipboard;
 using HsWin.Core.Config;
 using HsWin.Core.Hotkeys;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
 using HsWin.Core.Scripting;
+using HsWin.Core.Shell;
 using HsWin.Core.Timers;
 
 namespace HsWin.Core.Tests;
@@ -86,6 +89,21 @@ public sealed class ScriptRuntimeTests
         runtime.Reload(ConfigFileService.DefaultConfig);
 
         Assert.NotEmpty(hotkeys.Registrations);
+    }
+
+    [Fact]
+    public void ReloadAcceptsScriptRuntimeServices()
+    {
+        var presenter = new CapturingAlertPresenter();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter
+        });
+
+        runtime.Reload("""hs.alert.show("Services");""");
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("Services", request.Text);
     }
 
     [Fact]
@@ -240,6 +258,140 @@ public sealed class ScriptRuntimeTests
 
         var request = Assert.Single(presenter.Requests);
         Assert.Equal(@"2:456:C:\Games\Apex\r5apex.exe", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesPasteboardAndClipboardAliases()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var clipboard = new CapturingClipboardService("hello");
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            clipboard,
+            NullShellService.Instance,
+            NullAudioDeviceController.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const previous = hs.pasteboard.getContents();
+            hs.clipboard.setContents(`${previous} world`);
+            hs.alert.show(hs.pasteboard.getContents(), "normal", 1);
+            """);
+
+        Assert.Equal("hello world", clipboard.Text);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("hello world", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesExecuteCommand()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var shell = new CapturingShellService
+        {
+            ExecuteResult = new ShellExecutionResult("echo hello", true, 0, "hello\r\n", string.Empty, TimedOut: false)
+        };
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullClipboardService.Instance,
+            shell,
+            NullAudioDeviceController.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const result = hs.execute("echo hello", { cwd: "C:\\Temp", timeoutMs: 1234 });
+            hs.alert.show(`${result.success}:${result.status}:${result.exitCode}:${result.output.trim()}`, "normal", 1);
+            """);
+
+        var execution = Assert.Single(shell.Executions);
+        Assert.Equal("echo hello", execution.Command);
+        Assert.Equal(@"C:\Temp", execution.Options.WorkingDirectory);
+        Assert.Equal(1234, execution.Options.TimeoutMs);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("true:true:0:hello", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesApplicationLaunch()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var shell = new CapturingShellService
+        {
+            LaunchResult = new LaunchResult("https://example.com", true, 42, null)
+        };
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullClipboardService.Instance,
+            shell,
+            NullAudioDeviceController.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const result = hs.application.launch("https://example.com", { arguments: "--new-window", cwd: "C:\\Temp" });
+            hs.alert.show(`${result.success}:${result.processId}`, "normal", 1);
+            """);
+
+        var launch = Assert.Single(shell.Launches);
+        Assert.Equal("https://example.com", launch.Target);
+        Assert.Equal("--new-window", launch.Options.Arguments);
+        Assert.Equal(@"C:\Temp", launch.Options.WorkingDirectory);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("true:42", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesAudioDeviceAndSoundApis()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var audio = new CapturingAudioDeviceController(
+            new AudioDeviceSnapshot("default-id", "Speakers", IsDefault: true, Volume: 25, Muted: false),
+            new AudioDeviceSnapshot("headphones-id", "Headphones", IsDefault: false, Volume: 40, Muted: true));
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullClipboardService.Instance,
+            NullShellService.Instance,
+            audio,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const device = hs.audiodevice.defaultOutputDevice();
+            const devices = hs.audiodevice.allOutputDevices();
+            device.setVolume(33);
+            const mute = hs.sound.toggleMute();
+            hs.alert.show(`${devices.length}:${device.name}:${hs.sound.getVolume()}:${mute.muted}`, "normal", 1);
+            """);
+
+        Assert.Equal(["default-id:33", "default-id:toggle"], audio.Actions);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("2:Speakers:33:true", request.Text);
     }
 
     [Fact]
@@ -517,6 +669,124 @@ public sealed class ScriptRuntimeTests
         public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
         {
             return _applications;
+        }
+    }
+
+    private sealed class CapturingClipboardService : IClipboardService
+    {
+        public CapturingClipboardService(string text)
+        {
+            Text = text;
+        }
+
+        public string Text { get; private set; }
+
+        public string GetText()
+        {
+            return Text;
+        }
+
+        public bool SetText(string text)
+        {
+            Text = text;
+            return true;
+        }
+    }
+
+    private sealed class CapturingShellService : IShellService
+    {
+        public List<CapturingExecution> Executions { get; } = [];
+
+        public List<CapturingLaunch> Launches { get; } = [];
+
+        public ShellExecutionResult ExecuteResult { get; init; } =
+            new("command", true, 0, string.Empty, string.Empty, TimedOut: false);
+
+        public LaunchResult LaunchResult { get; init; } =
+            new("target", true, 123, null);
+
+        public ShellExecutionResult Execute(string command, ShellExecutionOptions options)
+        {
+            Executions.Add(new CapturingExecution(command, options));
+            return ExecuteResult;
+        }
+
+        public LaunchResult Launch(string target, LaunchOptions options)
+        {
+            Launches.Add(new CapturingLaunch(target, options));
+            return LaunchResult;
+        }
+    }
+
+    private sealed record CapturingExecution(string Command, ShellExecutionOptions Options);
+
+    private sealed record CapturingLaunch(string Target, LaunchOptions Options);
+
+    private sealed class CapturingAudioDeviceController : IAudioDeviceController
+    {
+        private readonly Dictionary<string, AudioDeviceSnapshot> _devices;
+        private readonly string _defaultDeviceId;
+
+        public CapturingAudioDeviceController(params AudioDeviceSnapshot[] devices)
+        {
+            _devices = devices.ToDictionary(device => device.Id, StringComparer.OrdinalIgnoreCase);
+            _defaultDeviceId = devices.Single(device => device.IsDefault).Id;
+        }
+
+        public List<string> Actions { get; } = [];
+
+        public AudioDeviceSnapshot GetDefaultOutputDevice()
+        {
+            return _devices[_defaultDeviceId];
+        }
+
+        public IReadOnlyList<AudioDeviceSnapshot> GetOutputDevices()
+        {
+            return _devices.Values.ToArray();
+        }
+
+        public AudioDeviceVolumeSnapshot GetVolume(string? deviceId)
+        {
+            return ToVolumeSnapshot(ResolveDevice(deviceId));
+        }
+
+        public AudioDeviceVolumeSnapshot SetVolume(string? deviceId, double volume)
+        {
+            var device = ResolveDevice(deviceId);
+            Actions.Add($"{device.Id}:{volume}");
+            var updated = device with { Volume = volume };
+            _devices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        public AudioDeviceVolumeSnapshot SetMuted(string? deviceId, bool muted)
+        {
+            var device = ResolveDevice(deviceId);
+            Actions.Add($"{device.Id}:muted:{muted}");
+            var updated = device with { Muted = muted };
+            _devices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        public AudioDeviceVolumeSnapshot ToggleMute(string? deviceId)
+        {
+            var device = ResolveDevice(deviceId);
+            Actions.Add($"{device.Id}:toggle");
+            var updated = device with { Muted = !device.Muted };
+            _devices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        private AudioDeviceSnapshot ResolveDevice(string? deviceId)
+        {
+            return string.IsNullOrWhiteSpace(deviceId)
+                ? _devices[_defaultDeviceId]
+                : _devices[deviceId];
+        }
+
+        private static AudioDeviceVolumeSnapshot ToVolumeSnapshot(AudioDeviceSnapshot device)
+        {
+            return new AudioDeviceVolumeSnapshot(device.Id, device.Name, device.Volume, device.Muted);
         }
     }
 

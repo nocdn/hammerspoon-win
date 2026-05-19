@@ -19,6 +19,8 @@ hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
 
 Defaults when omitted: `type` is `success`, `durationMs` is `2000`. Types are `normal`, `success`, and `error`; aliases include `ok`, `done`, `plain`, `info`, `failure`, and `failed`.
 
+The first visible toast creates the toast window lazily; later toasts reuse the hidden window so repeated hotkey feedback stays lightweight and responsive.
+
 ### `console.log`, `console.info`, `console.warn`, `console.error`
 
 Writes to `%APPDATA%\HsWin\config-logs\MM-dd-yyyy-HH-mm.log`. Objects are JSON-serialized; `Error` values use their stack or message.
@@ -29,6 +31,36 @@ console.warn("Deprecated binding");
 console.error(new Error("Something went wrong"));
 console.log("Apps", hs.application.runningApplications());
 ```
+
+### `hs.pasteboard.getContents()`, `hs.pasteboard.setContents(text)`, `hs.clipboard`
+
+Gets or sets Unicode text on the Windows clipboard. `hs.clipboard` is an alias for `hs.pasteboard`.
+
+```js
+const previous = hs.pasteboard.getContents();
+hs.clipboard.setContents(`${previous}\nUpdated by HsWin`);
+```
+
+`getContents()` returns an empty string when the clipboard does not currently contain text. `setContents(text)` returns `true` after the clipboard is updated.
+
+### `hs.execute(command, options?)`
+
+Runs a command through `cmd.exe /S /C` and returns a result object.
+
+```js
+const result = hs.execute("git status --short", {
+  cwd: "C:\\Users\\me\\project",
+  timeoutMs: 5000
+});
+
+if (result.success) {
+  console.log(result.output);
+} else {
+  console.error(result.error);
+}
+```
+
+Options are `cwd`/`workingDirectory` and `timeoutMs`/`timeout`; the default timeout is 30000 ms. The result has `command`, `success`, `status`, `exitCode`, `output`, `error`, and `timedOut`.
 
 ### `hs.hotkey.bind(modifiers, key, callback)`
 
@@ -68,6 +100,20 @@ for (const app of hs.application.runningApplications()) {
 
 Each item has `pid`, `processName`, `mainWindowTitle`, and `path`.
 
+### `hs.application.launch(target, options?)`
+
+Opens a URL, document, executable, or registered app target through the Windows shell.
+
+```js
+if (!hs.application.isRunning("notepad.exe")) {
+  hs.application.launch("notepad.exe");
+}
+
+hs.application.launch("https://www.hammerspoon.org/");
+```
+
+Options are `cwd`/`workingDirectory` and `arguments`/`args`. The result has `target`, `success`, `processId`, and `error`; `processId` can be `null` for shell-handled targets such as URLs.
+
 ### `hs.media.playPause()`, `hs.media.previousTrack()`, `hs.media.nextTrack()`
 
 Controls the current Windows media session when one is available, otherwise sends the corresponding media key.
@@ -81,6 +127,27 @@ hs.media.nextTrack();
 ```
 
 Each call returns `command`, `success`, `action`, `statusBefore`, `statusAfter`, and `backend`. `playPause` actions are `played`, `paused`, `toggled`, or `playPause`; track actions are `previousTrack` and `nextTrack`.
+
+### `hs.audiodevice`, `hs.sound`
+
+Reads and updates Windows output device volume and mute state. `hs.sound` is a simple default-output shortcut; `hs.audiodevice` can target a specific output device.
+
+```js
+const output = hs.audiodevice.defaultOutputDevice();
+console.log(output.name, output.volume, output.muted);
+
+output.setVolume(35);
+output.setMuted(false);
+
+for (const device of hs.audiodevice.allOutputDevices()) {
+  console.log(device.id, device.name, device.volume, device.muted);
+}
+
+hs.sound.setVolume(20);
+hs.sound.toggleMute();
+```
+
+Device objects have `id`, `name`, `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)` use the default output device when `deviceId` is omitted. Volume is 0-100.
 
 ### `hs.keyboard.watch(callback, options?)`
 
@@ -238,8 +305,8 @@ hs.hotkey.bind([], "`", () => {
 
 ## Projects
 
-- `src/HsWin.App`: WPF tray application, toast window, native hotkeys, keyboard hook, input injection, timers, media control, startup integration, editor launching.
-- `src/HsWin.Core`: config file creation, alert contracts, ClearScript runtime, and script-facing API wiring.
+- `src/HsWin.App`: WPF tray application, toast window, native hotkeys, keyboard hook, input injection, timers, clipboard, shell launching, audio/media control, startup integration, editor launching.
+- `src/HsWin.Core`: config file creation, alert contracts, service contracts, ClearScript runtime, and script-facing API wiring.
 - `tests/HsWin.Core.Tests`: parser, config, and JavaScript bridge tests.
 - `tests/HsWin.App.Tests`: WPF-side constants and app-layer behavior that can be tested without fragile screenshots.
 

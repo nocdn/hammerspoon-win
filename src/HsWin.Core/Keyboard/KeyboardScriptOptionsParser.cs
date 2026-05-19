@@ -1,7 +1,6 @@
-using System.Collections;
 using System.Globalization;
 using HsWin.Core.Hotkeys;
-using Microsoft.ClearScript;
+using HsWin.Core.Scripting;
 
 namespace HsWin.Core.Keyboard;
 
@@ -9,46 +8,47 @@ public static class KeyboardScriptOptionsParser
 {
     public static KeyboardEventWatchOptions ParseWatchOptions(object? value)
     {
-        if (IsMissing(value))
+        if (ScriptArgumentReader.IsMissing(value))
         {
             return KeyboardEventWatchOptions.Default;
         }
 
-        var includeInjected = GetPropertyValue(value!, "includeInjected");
+        var includeInjected = ScriptArgumentReader.GetPropertyValue(value, "includeInjected");
         return new KeyboardEventWatchOptions(
-            IsMissing(includeInjected)
+            ScriptArgumentReader.IsMissing(includeInjected)
                 ? KeyboardEventWatchOptions.Default.IncludeInjected
                 : Convert.ToBoolean(includeInjected, CultureInfo.InvariantCulture));
     }
 
     public static KeyboardTapOptions ParseTapOptions(object? value)
     {
-        if (IsMissing(value))
+        if (ScriptArgumentReader.IsMissing(value))
         {
             return KeyboardTapOptions.Default;
         }
 
-        var suppressValue = GetPropertyValue(value!, "suppressPhysicalModifiers")
-            ?? GetPropertyValue(value!, "suppressModifiers")
-            ?? GetPropertyValue(value!, "withoutModifiers");
+        var suppressValue = ScriptArgumentReader.GetPropertyValue(
+            value,
+            "suppressPhysicalModifiers",
+            "suppressModifiers",
+            "withoutModifiers");
 
         return new KeyboardTapOptions(
-            IsMissing(suppressValue)
+            ScriptArgumentReader.IsMissing(suppressValue)
                 ? KeyboardTapOptions.Default.SuppressPhysicalModifiers
                 : HotkeyParser.ParseModifiers(suppressValue));
     }
 
     public static KeyboardRepeatOptions ParseRepeatOptions(object? value)
     {
-        if (IsMissing(value))
+        if (ScriptArgumentReader.IsMissing(value))
         {
             return KeyboardRepeatOptions.Default;
         }
 
-        var intervalValue = GetPropertyValue(value!, "intervalMs")
-            ?? GetPropertyValue(value!, "interval");
+        var intervalValue = ScriptArgumentReader.GetPropertyValue(value, "intervalMs", "interval");
         var tapOptions = ParseTapOptions(value);
-        var intervalMs = IsMissing(intervalValue)
+        var intervalMs = ScriptArgumentReader.IsMissing(intervalValue)
             ? KeyboardRepeatOptions.Default.IntervalMs
             : ConvertToRepeatInterval(intervalValue!);
 
@@ -77,45 +77,5 @@ public static class KeyboardScriptOptionsParser
         {
             throw new ArgumentException("intervalMs must be a number of milliseconds.", nameof(value), exception);
         }
-    }
-
-    private static object? GetPropertyValue(object value, string name)
-    {
-        if (value is ScriptObject scriptObject)
-        {
-            var actualName = scriptObject.PropertyNames
-                .FirstOrDefault(propertyName => string.Equals(propertyName, name, StringComparison.OrdinalIgnoreCase));
-
-            return actualName is null ? null : scriptObject.GetProperty(actualName);
-        }
-
-        if (value is IReadOnlyDictionary<string, object?> readOnlyDictionary)
-        {
-            foreach (var item in readOnlyDictionary)
-            {
-                if (string.Equals(item.Key, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return item.Value;
-                }
-            }
-        }
-
-        if (value is IDictionary dictionary)
-        {
-            foreach (DictionaryEntry item in dictionary)
-            {
-                if (item.Key is string key && string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return item.Value;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static bool IsMissing(object? value)
-    {
-        return value is null || ReferenceEquals(value, Undefined.Value);
     }
 }

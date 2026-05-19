@@ -3,10 +3,13 @@ using HsWin.Core.Applications;
 using HsWin.Core.Config;
 using HsWin.Core.Logging;
 using HsWin.Core.Scripting;
+using HsWin.App.Audio;
+using HsWin.App.Clipboard;
 using HsWin.App.Hotkeys;
 using HsWin.App.Input;
 using HsWin.App.Keyboard;
 using HsWin.App.Media;
+using HsWin.App.Shell;
 using HsWin.App.Timers;
 using System.Reflection;
 using WpfApplication = System.Windows.Application;
@@ -23,6 +26,9 @@ internal sealed class AppController : IDisposable
     private readonly NativeKeyboardEventService _keyboardEventService;
     private readonly KeyboardInputService _keyboardInputService;
     private readonly DispatcherScriptTimerService _timerService;
+    private readonly NativeClipboardService _clipboardService;
+    private readonly ProcessShellService _shellService;
+    private readonly NativeAudioDeviceController _audioDeviceController;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
     private readonly TrayIconService _trayIconService;
@@ -40,16 +46,24 @@ internal sealed class AppController : IDisposable
         _keyboardEventService = new NativeKeyboardEventService(_logger);
         _keyboardInputService = new KeyboardInputService(_logger);
         _timerService = new DispatcherScriptTimerService(WpfApplication.Current.Dispatcher);
-        _scriptRuntime = new ScriptRuntime(
-            _toastPresenter,
-            _hotkeyService,
-            _scriptConsoleLogger,
-            new ProcessApplicationProvider(_logger),
-            new NativeMediaController(_logger),
-            _keyboardEventService,
-            _keyboardInputService,
-            _timerService,
-            _logger);
+        _clipboardService = new NativeClipboardService(WpfApplication.Current.Dispatcher, _logger);
+        _shellService = new ProcessShellService(_logger);
+        _audioDeviceController = new NativeAudioDeviceController(_logger);
+        _scriptRuntime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = _toastPresenter,
+            Hotkeys = _hotkeyService,
+            Console = _scriptConsoleLogger,
+            Applications = new ProcessApplicationProvider(_logger),
+            Media = new NativeMediaController(_logger),
+            KeyboardEvents = _keyboardEventService,
+            KeyboardInput = _keyboardInputService,
+            Timers = _timerService,
+            Clipboard = _clipboardService,
+            Shell = _shellService,
+            AudioDevices = _audioDeviceController,
+            Logger = _logger
+        });
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,
@@ -126,6 +140,8 @@ internal sealed class AppController : IDisposable
         _logger.Info("Hotkey service disposed.");
         _keyboardEventService.Dispose();
         _logger.Info("Keyboard event service disposed.");
+        _toastPresenter.Dispose();
+        _logger.Info("Toast presenter disposed.");
         _disposed = true;
     }
 
