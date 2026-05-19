@@ -10,18 +10,18 @@ public sealed class ConfigFileService
 
         console.log("Reloading config");
         hs.hotkey.bind(["ctrl", "alt"], "R", () => {
-          const isRunning = hs.application.isRunning("TOTClient-Win64-Shipping.exe");
+          const isRunning = hs.application.isRunning("r5apex_dx12.exe");
 
           hs.alert.show(
-            isRunning ? "Outlast Trials is running" : "Outlast Trials is not running",
+            isRunning ? "Apex is running" : "Apex is not running",
             { type: isRunning ? "success" : "error", durationMs: 2000 }
           );
         });
 
-        const outlastProcessName = "TOTClient-Win64-Shipping.exe";
+        const apexProcessName = "r5apex_dx12.exe";
 
         hs.hotkey.bind([], "`", () => {
-          if (hs.application.isRunning(outlastProcessName)) {
+          if (hs.application.isRunning(apexProcessName)) {
             const result = hs.media.playPause();
             const text = result.action === "played"
               ? "Played"
@@ -34,13 +34,13 @@ public sealed class ConfigFileService
         });
 
         hs.hotkey.bind([], "delete", () => {
-          if (hs.application.isRunning(outlastProcessName)) {
+          if (hs.application.isRunning(apexProcessName)) {
             hs.media.previousTrack();
           }
         });
 
         hs.hotkey.bind([], "pageup", () => {
-          if (hs.application.isRunning(outlastProcessName)) {
+          if (hs.application.isRunning(apexProcessName)) {
             hs.media.nextTrack();
           }
         });

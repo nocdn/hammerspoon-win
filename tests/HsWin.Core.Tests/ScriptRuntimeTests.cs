@@ -273,7 +273,7 @@ public sealed class ScriptRuntimeTests
         var presenter = new CapturingAlertPresenter();
         var hotkeys = new CapturingHotkeyRegistrar();
         var applications = new CapturingApplicationProvider(
-            new ApplicationSnapshot(123, "TOTClient-Win64-Shipping", "The Outlast Trials", null));
+            new ApplicationSnapshot(123, "r5apex_dx12", "Apex Legends", null));
         var media = new CapturingMediaController();
         using var runtime = new ScriptRuntime(
             presenter,
@@ -284,9 +284,9 @@ public sealed class ScriptRuntimeTests
             NullRuntimeLogger.Instance);
 
         runtime.Reload("""
-            const outlastProcessName = "TOTClient-Win64-Shipping.exe";
+            const apexProcessName = "r5apex_dx12.exe";
             hs.hotkey.bind([], "`", () => {
-              if (hs.application.isRunning(outlastProcessName)) hs.media.playPause();
+              if (hs.application.isRunning(apexProcessName)) hs.media.playPause();
             });
             """);
 
