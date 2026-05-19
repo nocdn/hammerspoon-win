@@ -18,7 +18,7 @@ public sealed class ToastStyleMetricsTests
     public void ToastDotUsesRequestedSizeAndGap()
     {
         Assert.Equal(6, ToastStyleMetrics.DotSize);
-        Assert.Equal(8, ToastStyleMetrics.DotTextGap);
+        Assert.Equal(10, ToastStyleMetrics.DotTextGap);
     }
 
     [Fact]

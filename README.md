@@ -81,3 +81,7 @@ dotnet test HammerspoonWin.slnx
 ```
 
 The installer is built with Inno Setup and written to `artifacts\installer`. It installs the published `win-x64` app and shows a checked `Launch HammerSpoon (Windows Edition)` option on the final setup page.
+
+## Releases
+
+The GitHub Actions release workflow runs on `main` pushes and manual dispatches. It builds and tests on Windows, compiles the Inno Setup installer, uploads the installer as a workflow artifact, and publishes a normal GitHub release tagged with the workflow run number.

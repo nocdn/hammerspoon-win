@@ -17,4 +17,5 @@
   - `dotnet test HammerspoonWin.slnx`
   - If build and tests pass after code changes, create the installer with `.\scripts\Build-Installer.ps1`.
   - Launch the generated installer from `artifacts\installer` for manual testing instead of starting the app with `dotnet run`.
-  - The installer uses Inno Setup, so `ISCC.exe` must be installed or `INNO_SETUP_ISCC` must point to it.
+- The installer uses Inno Setup, so `ISCC.exe` must be installed or `INNO_SETUP_ISCC` must point to it.
+- GitHub Actions release publishing lives in `.github/workflows/release.yml`; releases are normal non-prerelease releases, tagged with the Actions run number.

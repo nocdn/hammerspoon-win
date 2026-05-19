@@ -4,11 +4,16 @@
 #define MyAppExeName "HammerspoonWin.App.exe"
 #define MyInstallFolderName "HammerspoonWin"
 #define MyAppVersion GetEnv("HAMMERSPOONWIN_VERSION")
+#define MyVersionInfoVersion GetEnv("HAMMERSPOONWIN_VERSION_INFO_VERSION")
 #define MyPublishDir GetEnv("HAMMERSPOONWIN_PUBLISH_DIR")
 #define MyOutputDir GetEnv("HAMMERSPOONWIN_OUTPUT_DIR")
 
 #if MyAppVersion == ""
   #define MyAppVersion "0.1.0"
+#endif
+
+#if MyVersionInfoVersion == ""
+  #define MyVersionInfoVersion "0.1.0.0"
 #endif
 
 #if MyPublishDir == ""
@@ -45,7 +50,7 @@ VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyVersionInfoVersion}
 
 [Files]
 Source: "{#MyPublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

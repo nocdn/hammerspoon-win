@@ -2,7 +2,8 @@
 param(
     [string] $Configuration = "Release",
     [string] $RuntimeIdentifier = "win-x64",
-    [string] $Version = "0.1.0"
+    [string] $Version = "0.1.0",
+    [string] $VersionInfoVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,21 @@ $installerScriptPath = Join-Path $repoRoot "installer\HammerspoonWin.iss"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $publishDir = Join-Path $artifactsRoot "publish\HammerspoonWin.App\$Configuration\$RuntimeIdentifier"
 $installerOutputDir = Join-Path $artifactsRoot "installer"
+
+if ([string]::IsNullOrWhiteSpace($VersionInfoVersion)) {
+    if ($Version -match '^\d+$') {
+        $VersionInfoVersion = "0.0.0.$Version"
+    }
+    elseif ($Version -match '^\d+\.\d+\.\d+$') {
+        $VersionInfoVersion = "$Version.0"
+    }
+    elseif ($Version -match '^\d+\.\d+\.\d+\.\d+$') {
+        $VersionInfoVersion = $Version
+    }
+    else {
+        $VersionInfoVersion = "0.0.0.0"
+    }
+}
 
 function Assert-ChildPath {
     param(
@@ -83,11 +99,13 @@ dotnet publish $projectPath `
 $iscc = Get-InnoSetupCompiler
 
 $previousVersion = $env:HAMMERSPOONWIN_VERSION
+$previousVersionInfoVersion = $env:HAMMERSPOONWIN_VERSION_INFO_VERSION
 $previousPublishDir = $env:HAMMERSPOONWIN_PUBLISH_DIR
 $previousOutputDir = $env:HAMMERSPOONWIN_OUTPUT_DIR
 
 try {
     $env:HAMMERSPOONWIN_VERSION = $Version
+    $env:HAMMERSPOONWIN_VERSION_INFO_VERSION = $VersionInfoVersion
     $env:HAMMERSPOONWIN_PUBLISH_DIR = $publishDir
     $env:HAMMERSPOONWIN_OUTPUT_DIR = $installerOutputDir
 
@@ -98,6 +116,7 @@ try {
 }
 finally {
     $env:HAMMERSPOONWIN_VERSION = $previousVersion
+    $env:HAMMERSPOONWIN_VERSION_INFO_VERSION = $previousVersionInfoVersion
     $env:HAMMERSPOONWIN_PUBLISH_DIR = $previousPublishDir
     $env:HAMMERSPOONWIN_OUTPUT_DIR = $previousOutputDir
 }
