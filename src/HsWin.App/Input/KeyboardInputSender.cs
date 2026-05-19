@@ -58,7 +58,46 @@ internal static partial class KeyboardInputSender
             }
         }
 
-        SendInputs(inputs[..inputCount], virtualKey, logger);
+        try
+        {
+            SendInputs(inputs[..inputCount], virtualKey, logger);
+        }
+        catch
+        {
+            RestoreAfterFailedTap(virtualKey, suppressedModifierVirtualKeys, logger);
+            throw;
+        }
+    }
+
+    private static unsafe void RestoreAfterFailedTap(
+        uint virtualKey,
+        IReadOnlyList<uint>? suppressedModifierVirtualKeys,
+        IRuntimeLogger? logger)
+    {
+        Span<Input> inputs = stackalloc Input[5];
+        var inputCount = 0;
+        inputs[inputCount++] = CreateKeyboardInput(virtualKey, keyUp: true);
+
+        if (suppressedModifierVirtualKeys is not null)
+        {
+            foreach (var modifierVirtualKey in suppressedModifierVirtualKeys.Reverse())
+            {
+                inputs[inputCount++] = CreateKeyboardInput(modifierVirtualKey, keyUp: false);
+            }
+        }
+
+        fixed (Input* inputPointer = inputs[..inputCount])
+        {
+            var sentCount = User32.SendInput((uint)inputCount, inputPointer, NativeInputSize);
+            if (sentCount != inputCount)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                logger?.Warning($"SendInput recovery sent {sentCount}/{inputCount} events for vk=0x{virtualKey:X2} win32=0x{error:X}.");
+                return;
+            }
+        }
+
+        logger?.Warning($"Recovered keyboard state after failed tap for vk=0x{virtualKey:X2}.");
     }
 
     private static unsafe void SendInputs(ReadOnlySpan<Input> inputs, uint virtualKey, IRuntimeLogger? logger)

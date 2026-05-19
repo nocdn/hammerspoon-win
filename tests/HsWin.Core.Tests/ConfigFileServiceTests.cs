@@ -18,6 +18,23 @@ public sealed class ConfigFileServiceTests
     }
 
     [Fact]
+    public void EnsureConfigFileCreatesHardenedTurboRepeatState()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var configPath = Path.Combine(directory.Path, "config.js");
+        var service = new ConfigFileService(configPath);
+
+        service.EnsureConfigFile();
+
+        var config = File.ReadAllText(configPath);
+        Assert.Contains("intervalMs: 15", config, StringComparison.Ordinal);
+        Assert.Contains("state: \"idle\"", config, StringComparison.Ordinal);
+        Assert.Contains("this.state = \"starting\";", config, StringComparison.Ordinal);
+        Assert.Contains("this.state = \"running\";", config, StringComparison.Ordinal);
+        Assert.Contains("const sequence = ++this.sequence;", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EnsureConfigFileDoesNotOverwriteExistingConfig()
     {
         using var directory = TemporaryDirectory.Create();

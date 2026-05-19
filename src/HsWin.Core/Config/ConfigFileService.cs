@@ -12,17 +12,23 @@ public sealed class ConfigFileService
 
         const turboRepeat = {
           modifiers: ["alt", "shift"],
-          intervalMs: 5,
+          intervalMs: 15,
           keyCode: null,
           repeat: null,
+          state: "idle",
+          sequence: 0,
 
           stop() {
-            if (this.repeat) {
-              this.repeat.stop();
-              this.repeat = null;
-            }
+            this.sequence++;
 
+            const repeat = this.repeat;
+            this.repeat = null;
             this.keyCode = null;
+            this.state = "idle";
+
+            if (repeat) {
+              repeat.stop();
+            }
           },
 
           hasTriggerModifiers(event) {
@@ -34,15 +40,36 @@ public sealed class ConfigFileService
               this.stop();
             }
 
-            if (this.repeat) {
+            if (this.state !== "idle") {
               return;
             }
 
+            this.state = "starting";
             this.keyCode = event.keyCode;
-            this.repeat = hs.keyboard.repeat(this.keyCode, {
-              intervalMs: this.intervalMs,
-              suppressPhysicalModifiers: this.modifiers
-            });
+            const sequence = ++this.sequence;
+
+            try {
+              const repeat = hs.keyboard.repeat(this.keyCode, {
+                intervalMs: this.intervalMs,
+                suppressPhysicalModifiers: this.modifiers
+              });
+
+              if (this.sequence !== sequence || this.state !== "starting") {
+                repeat.stop();
+                return;
+              }
+
+              this.repeat = repeat;
+              this.state = "running";
+            } catch (error) {
+              if (this.sequence === sequence) {
+                this.repeat = null;
+                this.keyCode = null;
+                this.state = "idle";
+              }
+
+              throw error;
+            }
           }
         };
 

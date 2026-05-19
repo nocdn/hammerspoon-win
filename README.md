@@ -203,7 +203,7 @@ Sends or queries keyboard input. `key` accepts the same keyboard key names as `h
 
 ```js
 hs.keyboard.tap("w");
-const repeat = hs.keyboard.repeat("w", { intervalMs: 5 });
+const repeat = hs.keyboard.repeat("w", { intervalMs: 15 });
 repeat.stop();
 hs.keyboard.keyDown("shift");
 hs.keyboard.keyUp("shift");
@@ -221,7 +221,7 @@ hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
 
 Aliases for `suppressPhysicalModifiers` are `suppressModifiers` and `withoutModifiers`.
 
-`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`.
+`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`. The host keeps only one active native repeat at a time, replaces any previous repeat when a new one starts, releases suppressed modifiers without re-pressing them on every tick, and auto-stops a repeat after 5 seconds as a runaway safety net.
 
 ### `hs.timer.doAfter(delayMs, callback)`, `hs.timer.doEvery(intervalMs, callback)`
 
@@ -239,24 +239,30 @@ timer.stop();
 
 ### Example config
 
-The default `config.js` created on first run combines application checks, alerts, hotkeys, media controls, and a user-scripted Alt+Shift turbo-repeat:
+The default `config.js` created on first run combines application checks, alerts, hotkeys, media controls, and a user-scripted Alt+Shift turbo-repeat. The repeat helper uses an explicit `starting` state so rapid physical keydown callbacks cannot create multiple native repeat handles before the first one is stored.
 
 ```js
 console.log("Reloading config");
 
 const turboRepeat = {
   modifiers: ["alt", "shift"],
-  intervalMs: 5,
+  intervalMs: 15,
   keyCode: null,
   repeat: null,
+  state: "idle",
+  sequence: 0,
 
   stop() {
-    if (this.repeat) {
-      this.repeat.stop();
-      this.repeat = null;
-    }
+    this.sequence++;
 
+    const repeat = this.repeat;
+    this.repeat = null;
     this.keyCode = null;
+    this.state = "idle";
+
+    if (repeat) {
+      repeat.stop();
+    }
   },
 
   hasTriggerModifiers(event) {
@@ -268,15 +274,36 @@ const turboRepeat = {
       this.stop();
     }
 
-    if (this.repeat) {
+    if (this.state !== "idle") {
       return;
     }
 
+    this.state = "starting";
     this.keyCode = event.keyCode;
-    this.repeat = hs.keyboard.repeat(this.keyCode, {
-      intervalMs: this.intervalMs,
-      suppressPhysicalModifiers: this.modifiers
-    });
+    const sequence = ++this.sequence;
+
+    try {
+      const repeat = hs.keyboard.repeat(this.keyCode, {
+        intervalMs: this.intervalMs,
+        suppressPhysicalModifiers: this.modifiers
+      });
+
+      if (this.sequence !== sequence || this.state !== "starting") {
+        repeat.stop();
+        return;
+      }
+
+      this.repeat = repeat;
+      this.state = "running";
+    } catch (error) {
+      if (this.sequence === sequence) {
+        this.repeat = null;
+        this.keyCode = null;
+        this.state = "idle";
+      }
+
+      throw error;
+    }
   }
 };
 
