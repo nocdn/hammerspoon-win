@@ -1,8 +1,10 @@
 using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
+using HsWin.Core.Timers;
 using Microsoft.ClearScript.V8;
 
 namespace HsWin.Core.Scripting;
@@ -71,6 +73,54 @@ public sealed class ScriptRuntime : IDisposable
               nextTrack() {
                 return JSON.parse(host.MediaNextTrackJson());
               }
+            }),
+
+            keyboard: Object.freeze({
+              watch(callback, options) {
+                if (typeof callback !== "function") {
+                  throw new Error("Keyboard watch callback must be a function.");
+                }
+
+                return host.WatchKeyboard((eventJson) => callback(JSON.parse(eventJson)) === true, options);
+              },
+
+              tap(key, options) {
+                host.KeyboardTap(key, options);
+              },
+
+              repeat(key, options) {
+                return host.KeyboardRepeat(key, options);
+              },
+
+              keyDown(key) {
+                host.KeyboardKeyDown(key);
+              },
+
+              keyUp(key) {
+                host.KeyboardKeyUp(key);
+              },
+
+              isDown(key) {
+                return host.KeyboardIsDown(key);
+              }
+            }),
+
+            timer: Object.freeze({
+              doAfter(delayMs, callback) {
+                if (typeof callback !== "function") {
+                  throw new Error("Timer callback must be a function.");
+                }
+
+                return host.TimerDoAfter(delayMs, callback);
+              },
+
+              doEvery(intervalMs, callback) {
+                if (typeof callback !== "function") {
+                  throw new Error("Timer callback must be a function.");
+                }
+
+                return host.TimerDoEvery(intervalMs, callback);
+              }
             })
           });
 
@@ -99,6 +149,9 @@ public sealed class ScriptRuntime : IDisposable
     private readonly IScriptConsoleLogger _console;
     private readonly IApplicationProvider _applications;
     private readonly IMediaController _media;
+    private readonly IKeyboardEventService _keyboardEvents;
+    private readonly IKeyboardInputService _keyboardInput;
+    private readonly IScriptTimerService _timers;
     private readonly IRuntimeLogger _logger;
     private readonly List<IDisposable> _runtimeResources = [];
     private V8ScriptEngine? _engine;
@@ -111,6 +164,9 @@ public sealed class ScriptRuntime : IDisposable
             NullScriptConsoleLogger.Instance,
             NullApplicationProvider.Instance,
             NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
             NullRuntimeLogger.Instance)
     {
     }
@@ -122,12 +178,24 @@ public sealed class ScriptRuntime : IDisposable
             NullScriptConsoleLogger.Instance,
             NullApplicationProvider.Instance,
             NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
             NullRuntimeLogger.Instance)
     {
     }
 
     public ScriptRuntime(IAlertPresenter alerts, IHotkeyRegistrar hotkeys, IScriptConsoleLogger console)
-        : this(alerts, hotkeys, console, NullApplicationProvider.Instance, NullMediaController.Instance, NullRuntimeLogger.Instance)
+        : this(
+            alerts,
+            hotkeys,
+            console,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance)
     {
     }
 
@@ -138,12 +206,38 @@ public sealed class ScriptRuntime : IDisposable
         IApplicationProvider applications,
         IMediaController media,
         IRuntimeLogger logger)
+        : this(
+            alerts,
+            hotkeys,
+            console,
+            applications,
+            media,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            logger)
+    {
+    }
+
+    public ScriptRuntime(
+        IAlertPresenter alerts,
+        IHotkeyRegistrar hotkeys,
+        IScriptConsoleLogger console,
+        IApplicationProvider applications,
+        IMediaController media,
+        IKeyboardEventService keyboardEvents,
+        IKeyboardInputService keyboardInput,
+        IScriptTimerService timers,
+        IRuntimeLogger logger)
     {
         _alerts = alerts;
         _hotkeys = hotkeys;
         _console = console;
         _applications = applications;
         _media = media;
+        _keyboardEvents = keyboardEvents;
+        _keyboardInput = keyboardInput;
+        _timers = timers;
         _logger = logger;
     }
 
@@ -177,6 +271,9 @@ public sealed class ScriptRuntime : IDisposable
                     _console,
                     _applications,
                     _media,
+                    _keyboardEvents,
+                    _keyboardInput,
+                    _timers,
                     _logger,
                     newRuntimeResources.Add));
             engine.Execute("hswin:bootstrap", BootstrapScript);

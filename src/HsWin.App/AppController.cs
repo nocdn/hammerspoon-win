@@ -4,7 +4,10 @@ using HsWin.Core.Config;
 using HsWin.Core.Logging;
 using HsWin.Core.Scripting;
 using HsWin.App.Hotkeys;
+using HsWin.App.Input;
+using HsWin.App.Keyboard;
 using HsWin.App.Media;
+using HsWin.App.Timers;
 using System.Reflection;
 using WpfApplication = System.Windows.Application;
 
@@ -17,6 +20,9 @@ internal sealed class AppController : IDisposable
     private readonly ReloadScriptConsoleLogger _scriptConsoleLogger;
     private readonly ToastPresenter _toastPresenter;
     private readonly NativeHotkeyService _hotkeyService;
+    private readonly NativeKeyboardEventService _keyboardEventService;
+    private readonly KeyboardInputService _keyboardInputService;
+    private readonly DispatcherScriptTimerService _timerService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
     private readonly TrayIconService _trayIconService;
@@ -31,12 +37,18 @@ internal sealed class AppController : IDisposable
         _scriptConsoleLogger = new ReloadScriptConsoleLogger(paths.ConfigLogDirectory);
         _toastPresenter = new ToastPresenter();
         _hotkeyService = new NativeHotkeyService(_logger);
+        _keyboardEventService = new NativeKeyboardEventService(_logger);
+        _keyboardInputService = new KeyboardInputService(_logger);
+        _timerService = new DispatcherScriptTimerService(WpfApplication.Current.Dispatcher);
         _scriptRuntime = new ScriptRuntime(
             _toastPresenter,
             _hotkeyService,
             _scriptConsoleLogger,
             new ProcessApplicationProvider(_logger),
             new NativeMediaController(_logger),
+            _keyboardEventService,
+            _keyboardInputService,
+            _timerService,
             _logger);
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
         _trayIconService = new TrayIconService(
@@ -90,6 +102,7 @@ internal sealed class AppController : IDisposable
             _configFileService.EnsureConfigFile();
             _scriptRuntime.ReloadFromFile(_configFileService.ConfigFilePath);
             _logger.Info($"Config reloaded. Console log: {_scriptConsoleLogger.CurrentLogFilePath}");
+            _toastPresenter.Show(CreateConfigReloadedAlert());
         }
         catch (Exception exception)
         {
@@ -111,6 +124,8 @@ internal sealed class AppController : IDisposable
         _logger.Info("Script runtime disposed.");
         _hotkeyService.Dispose();
         _logger.Info("Hotkey service disposed.");
+        _keyboardEventService.Dispose();
+        _logger.Info("Keyboard event service disposed.");
         _disposed = true;
     }
 
@@ -133,6 +148,11 @@ internal sealed class AppController : IDisposable
     private static void Quit()
     {
         WpfApplication.Current.Shutdown();
+    }
+
+    internal static AlertRequest CreateConfigReloadedAlert()
+    {
+        return AlertRequest.Create("Config reloaded", AlertKind.Success, 2000);
     }
 
     private static string ResolveExecutablePath()

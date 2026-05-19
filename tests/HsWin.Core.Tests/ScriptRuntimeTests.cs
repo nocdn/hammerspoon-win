@@ -1,9 +1,12 @@
 using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
+using HsWin.Core.Config;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
 using HsWin.Core.Scripting;
+using HsWin.Core.Timers;
 
 namespace HsWin.Core.Tests;
 
@@ -62,6 +65,27 @@ public sealed class ScriptRuntimeTests
 
         var request = Assert.Single(presenter.Requests);
         Assert.Equal("undefined", request.Text);
+    }
+
+    [Fact]
+    public void ReloadAcceptsDefaultConfig()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload(ConfigFileService.DefaultConfig);
+
+        Assert.NotEmpty(hotkeys.Registrations);
     }
 
     [Fact]
@@ -295,6 +319,133 @@ public sealed class ScriptRuntimeTests
         Assert.Equal(["playPause"], media.Actions);
     }
 
+    [Fact]
+    public void ReloadExposesKeyboardWatchAndTap()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        var keyboardInput = new CapturingKeyboardInputService();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            keyboardInput,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            hs.keyboard.watch(event => {
+              if (event.type === "keydown" && event.key === "w") {
+                hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
+                return true;
+              }
+
+              return false;
+            });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.False(watch.Options.IncludeInjected);
+        var swallowed = watch.Callback(
+            new KeyboardEventSnapshot(
+                "keydown",
+                (uint)'W',
+                "w",
+                ["alt", "shift"],
+                (uint)(HotkeyModifiers.Alt | HotkeyModifiers.Shift),
+                IsKeyDown: true,
+                IsKeyUp: false,
+                IsModifier: false,
+                IsInjected: false,
+                IsExtended: false));
+
+        Assert.True(swallowed);
+        var tap = Assert.Single(keyboardInput.Taps);
+        Assert.Equal((uint)'W', tap.VirtualKey);
+        Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, tap.Options.SuppressPhysicalModifiers);
+    }
+
+    [Fact]
+    public void ReloadExposesKeyboardRepeat()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardInput = new CapturingKeyboardInputService();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            keyboardInput,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""hs.keyboard.repeat("w", { intervalMs: 5, suppressPhysicalModifiers: ["alt", "shift"] });""");
+
+        var repeat = Assert.Single(keyboardInput.Repeats);
+        Assert.Equal((uint)'W', repeat.VirtualKey);
+        Assert.Equal(5, repeat.Options.IntervalMs);
+        Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, repeat.Options.SuppressPhysicalModifiers);
+    }
+
+    [Fact]
+    public void ReloadDisposesKeyboardWatchesAndTimers()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        var timers = new CapturingScriptTimerService();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            NullKeyboardInputService.Instance,
+            timers,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            hs.keyboard.watch(() => false);
+            hs.timer.doEvery(25, () => {});
+            """);
+        var watch = Assert.Single(keyboardEvents.Watches).Registration;
+        var timer = Assert.Single(timers.Timers);
+        runtime.Reload("""console.log("second");""");
+
+        Assert.True(watch.IsDisposed);
+        Assert.True(timer.IsDisposed);
+    }
+
+    [Fact]
+    public void ReloadExposesTimerDoAfter()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var timers = new CapturingScriptTimerService();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            NullKeyboardInputService.Instance,
+            timers,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""hs.timer.doAfter(10, () => hs.alert.show("timer"));""");
+        Assert.Single(timers.Timers).Trigger();
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("timer", request.Text);
+    }
+
     private sealed class CapturingAlertPresenter : IAlertPresenter
     {
         public List<AlertRequest> Requests { get; } = [];
@@ -366,6 +517,119 @@ public sealed class ScriptRuntimeTests
         public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
         {
             return _applications;
+        }
+    }
+
+    private sealed class CapturingKeyboardEventService : IKeyboardEventService
+    {
+        public List<CapturingKeyboardWatch> Watches { get; } = [];
+
+        public IDisposable Watch(KeyboardEventWatchOptions options, Func<KeyboardEventSnapshot, bool> callback)
+        {
+            var registration = new CapturingDisposable();
+            Watches.Add(new CapturingKeyboardWatch(options, callback, registration));
+            return registration;
+        }
+
+        public bool IsKeyDown(uint virtualKey)
+        {
+            return virtualKey == (uint)'W';
+        }
+    }
+
+    private sealed record CapturingKeyboardWatch(
+        KeyboardEventWatchOptions Options,
+        Func<KeyboardEventSnapshot, bool> Callback,
+        CapturingDisposable Registration);
+
+    private sealed class CapturingKeyboardInputService : IKeyboardInputService
+    {
+        public List<CapturingTap> Taps { get; } = [];
+
+        public List<CapturingRepeat> Repeats { get; } = [];
+
+        public void KeyDown(uint virtualKey)
+        {
+        }
+
+        public void KeyUp(uint virtualKey)
+        {
+        }
+
+        public void Tap(uint virtualKey, KeyboardTapOptions options)
+        {
+            Taps.Add(new CapturingTap(virtualKey, options));
+        }
+
+        public IDisposable Repeat(uint virtualKey, KeyboardRepeatOptions options)
+        {
+            var registration = new CapturingDisposable();
+            Repeats.Add(new CapturingRepeat(virtualKey, options, registration));
+            return registration;
+        }
+    }
+
+    private sealed record CapturingTap(uint VirtualKey, KeyboardTapOptions Options);
+
+    private sealed record CapturingRepeat(
+        uint VirtualKey,
+        KeyboardRepeatOptions Options,
+        CapturingDisposable Registration);
+
+    private sealed class CapturingScriptTimerService : IScriptTimerService
+    {
+        public List<CapturingTimer> Timers { get; } = [];
+
+        public IDisposable DoAfter(int delayMs, Action callback)
+        {
+            return AddTimer(delayMs, callback);
+        }
+
+        public IDisposable DoEvery(int intervalMs, Action callback)
+        {
+            return AddTimer(intervalMs, callback);
+        }
+
+        private CapturingTimer AddTimer(int intervalMs, Action callback)
+        {
+            var timer = new CapturingTimer(intervalMs, callback);
+            Timers.Add(timer);
+            return timer;
+        }
+    }
+
+    private sealed class CapturingTimer : IDisposable
+    {
+        private readonly Action _callback;
+
+        public CapturingTimer(int intervalMs, Action callback)
+        {
+            IntervalMs = intervalMs;
+            _callback = callback;
+        }
+
+        public int IntervalMs { get; }
+
+        public bool IsDisposed { get; private set; }
+
+        public void Trigger()
+        {
+            _callback();
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
+        }
+    }
+
+    private sealed class CapturingDisposable : IDisposable
+    {
+        public bool IsDisposed { get; private set; }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
         }
     }
 

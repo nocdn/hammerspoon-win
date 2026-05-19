@@ -2,7 +2,7 @@
 
 Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HsWin\config.js`, and exposes a frozen `hs` global plus `console` logging.
 
-Reload the config from the tray menu at any time. Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, and rotates the config console log file.
+Reload the config from the tray menu at any time. Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, rotates the config console log file, and shows a `Config reloaded` success toast when it completes.
 
 ## Current API
 
@@ -17,30 +17,7 @@ hs.alert.show("Something failed", { type: "error", durationMs: 4000 });
 hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
 ```
 
-| Argument | Description |
-| --- | --- |
-| `text` | Message string (required). |
-| `optionsOrKind` | Either an alert type string (`normal`, `success`, `error`) or an options object. |
-| `durationMs` | Display time in milliseconds when using the positional type argument. |
-
-Options object fields (any one name is enough):
-
-| Field | Aliases | Description |
-| --- | --- | --- |
-| `type` | `kind`, `state`, `status` | `normal`, `success`, or `error`. |
-| `durationMs` | `duration` | Display time in milliseconds. |
-
-Defaults when omitted: `type` is `success`, `durationMs` is `2000`.
-
-Alert types:
-
-| Type | Appearance |
-| --- | --- |
-| `normal` | Text only, no dot. |
-| `success` | Green dot. |
-| `error` | Red dot. |
-
-The string forms `ok`, `done`, `plain`, `info`, `failure`, and `failed` are also accepted as aliases for the three main types.
+Defaults when omitted: `type` is `success`, `durationMs` is `2000`. Types are `normal`, `success`, and `error`; aliases include `ok`, `done`, `plain`, `info`, `failure`, and `failed`.
 
 ### `console.log`, `console.info`, `console.warn`, `console.error`
 
@@ -48,7 +25,6 @@ Writes to `%APPDATA%\HsWin\config-logs\MM-dd-yyyy-HH-mm.log`. Objects are JSON-s
 
 ```js
 console.log("Reloading config");
-console.info("Ready");
 console.warn("Deprecated binding");
 console.error(new Error("Something went wrong"));
 console.log("Apps", hs.application.runningApplications());
@@ -56,30 +32,17 @@ console.log("Apps", hs.application.runningApplications());
 
 ### `hs.hotkey.bind(modifiers, key, callback)`
 
-Registers a global hotkey or mouse-button binding. Returns a disposable registration object; bindings from a previous config reload are disposed automatically.
+Registers a global hotkey or mouse-button binding. Bindings from a previous config reload are disposed automatically.
 
 ```js
 hs.hotkey.bind(["ctrl", "alt"], "R", () => hs.alert.show("Hotkey pressed"));
 hs.hotkey.bind([], "`", () => hs.media.playPause());
 hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
-hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
-hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));
 ```
 
-`modifiers` is an array of modifier names (or a single modifier string). Supported modifiers:
+Supported modifiers are `alt`, `option`, `opt`, `ctrl`, `control`, `shift`, `cmd`, `command`, `win`, `windows`, and `meta`.
 
-| Name | Maps to |
-| --- | --- |
-| `alt`, `option`, `opt` | Alt |
-| `ctrl`, `control` | Control |
-| `shift` | Shift |
-| `cmd`, `command`, `win`, `windows`, `meta` | Windows key |
-
-`key` is a letter (`A`–`Z`), digit (`0`–`9`), function key (`F1`–`F24`), a named key, or a mouse button.
-
-Named keyboard keys include `backspace`, `delete` / `del`, `tab`, `enter` / `return`, `escape` / `esc`, `space`, `pageup`, `pagedown`, `home`, `end`, `left`, `up`, `right`, `down`, `insert` / `ins`, `plus`, `minus`, `comma`, `period` / `dot`, `slash`, `semicolon`, `quote`, `backquote` / `grave`, `leftbracket`, `rightbracket`, `backslash`, and punctuation literals such as `` ` ``, `-`, `=`, `,`, `.`, `/`, `;`, `'`, `[`, `]`, `\`.
-
-Mouse button keys include `mouse.middle`, `middle`, `mouse.back`, `back`, `mouse.forward`, `forward`, and aliases such as `mouse.xbutton1`, `button4`, `mouse.button5`.
+`key` is a letter (`A`-`Z`), digit (`0`-`9`), function key (`F1`-`F24`), a named key, or a mouse button. Named keyboard keys include `backspace`, `delete`, `tab`, `enter`, `escape`, `space`, `pageup`, `pagedown`, `home`, `end`, arrows, `insert`, punctuation names, and punctuation literals. Mouse button keys include `mouse.middle`, `mouse.back`, and `mouse.forward` plus common aliases.
 
 If a hotkey callback throws, the runtime shows an error toast instead of crashing the host.
 
@@ -88,10 +51,6 @@ If a hotkey callback throws, the runtime shows an error toast instead of crashin
 Returns whether a process with the given name is running. The name may include or omit the `.exe` extension; matching is case-insensitive and compares the executable file name.
 
 ```js
-if (hs.application.isRunning("r5apex")) {
-  hs.alert.show("Apex is running");
-}
-
 if (hs.application.isRunning("r5apex_dx12.exe")) {
   hs.media.playPause();
 }
@@ -102,20 +61,12 @@ if (hs.application.isRunning("r5apex_dx12.exe")) {
 Returns an array of running application snapshots:
 
 ```js
-const apps = hs.application.runningApplications();
-for (const app of apps) {
+for (const app of hs.application.runningApplications()) {
   console.log(app.pid, app.processName, app.mainWindowTitle, app.path);
 }
 ```
 
-Each item has:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `pid` | number | Process ID. |
-| `processName` | string | Executable name without `.exe`. |
-| `mainWindowTitle` | string \| null | Title of the main window, if any. |
-| `path` | string \| null | Full path to the executable, if available. |
+Each item has `pid`, `processName`, `mainWindowTitle`, and `path`.
 
 ### `hs.media.playPause()`, `hs.media.previousTrack()`, `hs.media.nextTrack()`
 
@@ -123,44 +74,145 @@ Controls the current Windows media session when one is available, otherwise send
 
 ```js
 const result = hs.media.playPause();
-if (result.action === "played") {
-  hs.alert.show("Played", { durationMs: 400 });
-} else if (result.action === "paused") {
-  hs.alert.show("Paused", { durationMs: 400 });
-}
+hs.alert.show(result.action === "played" ? "Played" : "Paused", { durationMs: 400 });
 
 hs.media.previousTrack();
 hs.media.nextTrack();
 ```
 
-Each call returns an object:
+Each call returns `command`, `success`, `action`, `statusBefore`, `statusAfter`, and `backend`. `playPause` actions are `played`, `paused`, `toggled`, or `playPause`; track actions are `previousTrack` and `nextTrack`.
 
-| Field | Description |
-| --- | --- |
-| `command` | `playPause`, `previousTrack`, or `nextTrack`. |
-| `success` | Whether the operation reported success. |
-| `action` | What happened (see below). |
-| `statusBefore` | Playback status before `playPause` (`playing`, `paused`, `stopped`, `unknown`, etc.). |
-| `statusAfter` | Playback status after `playPause`. |
-| `backend` | `mediaSession` when a session was controlled, otherwise `sendInput`. |
+### `hs.keyboard.watch(callback, options?)`
 
-`playPause` `action` values:
+Subscribes to global keyboard events. The callback receives a plain JavaScript object and may return `true` to swallow the physical event so the active app does not receive it.
 
-| `action` | Meaning |
-| --- | --- |
-| `played` | Playback is now playing (or was inferred to have started). |
-| `paused` | Playback is now paused or stopped (or was inferred to have paused). |
-| `toggled` | Status could not be determined clearly. |
-| `playPause` | Media key fallback was used (`backend` is `sendInput`). |
+```js
+const watcher = hs.keyboard.watch(event => {
+  if (event.type === "keydown" && event.key === "w" && event.modifiers.includes("alt")) {
+    hs.alert.show("Alt+W");
+    return true;
+  }
 
-`previousTrack` and `nextTrack` set `action` to `previousTrack` or `nextTrack`. When the media-key fallback is used, `statusBefore` and `statusAfter` are `unknown`.
+  return false;
+});
+
+watcher.stop();
+```
+
+The implementation uses `WH_KEYBOARD_LL` for global key events and blocking. Injected events are ignored by default to avoid feedback loops when scripts call `hs.keyboard.tap`.
+
+Event fields are `type`, `keyCode`, `key`, `modifiers`, `modifierFlags`, `isKeyDown`, `isKeyUp`, `isModifier`, `isInjected`, and `isExtended`.
+
+Options:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `includeInjected` | `false` | When `true`, callbacks also receive synthetic events. |
+
+### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
+
+Sends or queries keyboard input. `key` accepts the same keyboard key names as `hs.hotkey.bind`, or a numeric virtual-key code.
+
+```js
+hs.keyboard.tap("w");
+const repeat = hs.keyboard.repeat("w", { intervalMs: 5 });
+repeat.stop();
+hs.keyboard.keyDown("shift");
+hs.keyboard.keyUp("shift");
+
+if (hs.keyboard.isDown("alt")) {
+  console.log("Alt is physically down");
+}
+```
+
+`tap` uses `SendInput`, which is the supported Win32 input injection API. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
+
+```js
+hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
+```
+
+Aliases for `suppressPhysicalModifiers` are `suppressModifiers` and `withoutModifiers`.
+
+`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`.
+
+### `hs.timer.doAfter(delayMs, callback)`, `hs.timer.doEvery(intervalMs, callback)`
+
+Runs JavaScript callbacks later or repeatedly on the app dispatcher thread. Returned handles support `stop()`, `dispose()`, and `delete()`; config reload stops active timers automatically.
+
+```js
+hs.timer.doAfter(500, () => hs.alert.show("Half a second later"));
+
+const timer = hs.timer.doEvery(35, () => {
+  hs.keyboard.tap("w");
+});
+
+timer.stop();
+```
 
 ### Example config
 
-The default `config.js` created on first run combines application checks, alerts, hotkeys, and media controls:
+The default `config.js` created on first run combines application checks, alerts, hotkeys, media controls, and a user-scripted Alt+Shift turbo-repeat:
 
 ```js
 console.log("Reloading config");
+
+const turboRepeat = {
+  modifiers: ["alt", "shift"],
+  intervalMs: 5,
+  keyCode: null,
+  repeat: null,
+
+  stop() {
+    if (this.repeat) {
+      this.repeat.stop();
+      this.repeat = null;
+    }
+
+    this.keyCode = null;
+  },
+
+  hasTriggerModifiers(event) {
+    return this.modifiers.every(modifier => event.modifiers.includes(modifier));
+  },
+
+  start(event) {
+    if (this.keyCode !== null && this.keyCode !== event.keyCode) {
+      this.stop();
+    }
+
+    if (this.repeat) {
+      return;
+    }
+
+    this.keyCode = event.keyCode;
+    this.repeat = hs.keyboard.repeat(this.keyCode, {
+      intervalMs: this.intervalMs,
+      suppressPhysicalModifiers: this.modifiers
+    });
+  }
+};
+
+hs.keyboard.watch(event => {
+  if (event.isModifier) {
+    if (!turboRepeat.hasTriggerModifiers(event)) {
+      turboRepeat.stop();
+    }
+
+    return false;
+  }
+
+  if (event.type === "keydown" && turboRepeat.hasTriggerModifiers(event)) {
+    turboRepeat.start(event);
+    return true;
+  }
+
+  if (event.type === "keyup" && event.keyCode === turboRepeat.keyCode) {
+    turboRepeat.stop();
+    return true;
+  }
+
+  return false;
+});
 
 hs.hotkey.bind(["ctrl", "alt"], "R", () => {
   const isRunning = hs.application.isRunning("r5apex_dx12.exe");
@@ -182,23 +234,11 @@ hs.hotkey.bind([], "`", () => {
     hs.alert.show(text, { durationMs: 400 });
   }
 });
-
-hs.hotkey.bind([], "delete", () => {
-  if (hs.application.isRunning(apexProcessName)) {
-    hs.media.previousTrack();
-  }
-});
-
-hs.hotkey.bind([], "pageup", () => {
-  if (hs.application.isRunning(apexProcessName)) {
-    hs.media.nextTrack();
-  }
-});
 ```
 
 ## Projects
 
-- `src/HsWin.App`: WPF tray application, toast window, native hotkeys and media control, startup integration, editor launching.
+- `src/HsWin.App`: WPF tray application, toast window, native hotkeys, keyboard hook, input injection, timers, media control, startup integration, editor launching.
 - `src/HsWin.Core`: config file creation, alert contracts, ClearScript runtime, and script-facing API wiring.
 - `tests/HsWin.Core.Tests`: parser, config, and JavaScript bridge tests.
 - `tests/HsWin.App.Tests`: WPF-side constants and app-layer behavior that can be tested without fragile screenshots.

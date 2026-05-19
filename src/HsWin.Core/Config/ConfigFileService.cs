@@ -9,6 +9,65 @@ public sealed class ConfigFileService
         // Edit this file, then use the tray menu to reload it.
 
         console.log("Reloading config");
+
+        const turboRepeat = {
+          modifiers: ["alt", "shift"],
+          intervalMs: 5,
+          keyCode: null,
+          repeat: null,
+
+          stop() {
+            if (this.repeat) {
+              this.repeat.stop();
+              this.repeat = null;
+            }
+
+            this.keyCode = null;
+          },
+
+          hasTriggerModifiers(event) {
+            return this.modifiers.every(modifier => event.modifiers.includes(modifier));
+          },
+
+          start(event) {
+            if (this.keyCode !== null && this.keyCode !== event.keyCode) {
+              this.stop();
+            }
+
+            if (this.repeat) {
+              return;
+            }
+
+            this.keyCode = event.keyCode;
+            this.repeat = hs.keyboard.repeat(this.keyCode, {
+              intervalMs: this.intervalMs,
+              suppressPhysicalModifiers: this.modifiers
+            });
+          }
+        };
+
+        hs.keyboard.watch(event => {
+          if (event.isModifier) {
+            if (!turboRepeat.hasTriggerModifiers(event)) {
+              turboRepeat.stop();
+            }
+
+            return false;
+          }
+
+          if (event.type === "keydown" && turboRepeat.hasTriggerModifiers(event)) {
+            turboRepeat.start(event);
+            return true;
+          }
+
+          if (event.type === "keyup" && event.keyCode === turboRepeat.keyCode) {
+            turboRepeat.stop();
+            return true;
+          }
+
+          return false;
+        });
+
         hs.hotkey.bind(["ctrl", "alt"], "R", () => {
           const isRunning = hs.application.isRunning("r5apex_dx12.exe");
 
