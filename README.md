@@ -19,7 +19,7 @@ hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
 
 Defaults when omitted: `type` is `success`, `durationMs` is `2000`. Types are `normal`, `success`, and `error`; aliases include `ok`, `done`, `plain`, `info`, `failure`, and `failed`.
 
-The first visible toast creates the toast window lazily; later toasts reuse the hidden window so repeated hotkey feedback stays lightweight and responsive.
+The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window.
 
 ### `console.log`, `console.info`, `console.warn`, `console.error`
 
@@ -82,11 +82,31 @@ If a hotkey callback throws, the runtime shows an error toast instead of crashin
 
 Returns whether a process with the given name is running. The name may include or omit the `.exe` extension; matching is case-insensitive and compares the executable file name.
 
+Each call asks Windows for processes with that name, which is fine occasionally but costs a few milliseconds on a hotkey path. For bindings you press often, cache the result in JavaScript and refresh it on a timer instead of calling `isRunning` inside the hotkey callback:
+
 ```js
-if (hs.application.isRunning("r5apex_dx12.exe")) {
-  hs.media.playPause();
-}
+const apex = {
+  processName: "r5apex_dx12.exe",
+  isRunning: false,
+
+  refresh() {
+    this.isRunning = hs.application.isRunning(this.processName);
+    return this.isRunning;
+  }
+};
+
+apex.refresh();
+hs.timer.doEvery(1000, () => apex.refresh());
+
+hs.hotkey.bind([], "`", () => {
+  if (apex.isRunning) {
+    hs.alert.show("Play/Pause", { durationMs: 400 });
+    hs.media.playPause();
+  }
+});
 ```
+
+A 1-second refresh is usually enough for game/media guards and keeps hotkeys responsive. The status hotkey in the default config calls `apex.refresh()` immediately when you want an up-to-date answer.
 
 ### `hs.application.runningApplications()`
 
@@ -119,8 +139,9 @@ Options are `cwd`/`workingDirectory` and `arguments`/`args`. The result has `tar
 Controls the current Windows media session when one is available, otherwise sends the corresponding media key.
 
 ```js
+// Show feedback first; media session work can take tens of ms on a cold call.
+hs.alert.show("Play/Pause", { durationMs: 400 });
 const result = hs.media.playPause();
-hs.alert.show(result.action === "played" ? "Played" : "Paused", { durationMs: 400 });
 
 hs.media.previousTrack();
 hs.media.nextTrack();
@@ -281,24 +302,31 @@ hs.keyboard.watch(event => {
   return false;
 });
 
+const apex = {
+  processName: "r5apex_dx12.exe",
+  isRunning: false,
+
+  refresh() {
+    this.isRunning = hs.application.isRunning(this.processName);
+    return this.isRunning;
+  }
+};
+
+apex.refresh();
+hs.timer.doEvery(1000, () => apex.refresh());
+
 hs.hotkey.bind(["ctrl", "alt"], "R", () => {
-  const isRunning = hs.application.isRunning("r5apex_dx12.exe");
+  const isRunning = apex.refresh();
   hs.alert.show(
     isRunning ? "Apex is running" : "Apex is not running",
     { type: isRunning ? "success" : "error", durationMs: 2000 }
   );
 });
 
-const apexProcessName = "r5apex_dx12.exe";
-
 hs.hotkey.bind([], "`", () => {
-  if (hs.application.isRunning(apexProcessName)) {
-    const result = hs.media.playPause();
-    const text =
-      result.action === "played" ? "Played" :
-      result.action === "paused" ? "Paused" :
-      "Played/Paused";
-    hs.alert.show(text, { durationMs: 400 });
+  if (apex.isRunning) {
+    hs.alert.show("Play/Pause", { durationMs: 400 });
+    hs.media.playPause();
   }
 });
 ```
@@ -316,6 +344,8 @@ hs.hotkey.bind([], "`", () => {
 - JavaScript console output: `%APPDATA%\HsWin\config-logs\MM-dd-yyyy-HH-mm.log`
 
 The runtime diagnostics log rotates on every app launch. The JavaScript console log rotates on every config reload.
+
+Recent builds also write timing lines to the runtime log for hotkey dispatch, toast show/layout/position, and media commands (`Toast show timing`, `Media session timing`, `elapsedMs=...`). Use these when tuning perceived latency.
 
 ## Development
 

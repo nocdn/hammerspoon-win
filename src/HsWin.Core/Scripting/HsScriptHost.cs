@@ -6,7 +6,7 @@ public sealed class HsScriptHost
         ScriptRuntimeServices services,
         Action<IDisposable> trackResource)
     {
-        var callbacks = new ScriptCallbackInvoker(services.Alerts);
+        var callbacks = new ScriptCallbackInvoker(services.Alerts, services.Logger);
 
         Alerts = new AlertScriptApi(services.Alerts);
         Console = new ConsoleScriptApi(services.Console);

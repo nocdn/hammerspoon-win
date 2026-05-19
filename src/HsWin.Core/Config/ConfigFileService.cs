@@ -68,8 +68,21 @@ public sealed class ConfigFileService
           return false;
         });
 
+        const apex = {
+          processName: "r5apex_dx12.exe",
+          isRunning: false,
+
+          refresh() {
+            this.isRunning = hs.application.isRunning(this.processName);
+            return this.isRunning;
+          }
+        };
+
+        apex.refresh();
+        hs.timer.doEvery(1000, () => apex.refresh());
+
         hs.hotkey.bind(["ctrl", "alt"], "R", () => {
-          const isRunning = hs.application.isRunning("r5apex_dx12.exe");
+          const isRunning = apex.refresh();
 
           hs.alert.show(
             isRunning ? "Apex is running" : "Apex is not running",
@@ -77,29 +90,21 @@ public sealed class ConfigFileService
           );
         });
 
-        const apexProcessName = "r5apex_dx12.exe";
-
         hs.hotkey.bind([], "`", () => {
-          if (hs.application.isRunning(apexProcessName)) {
-            const result = hs.media.playPause();
-            const text = result.action === "played"
-              ? "Played"
-              : result.action === "paused"
-                ? "Paused"
-                : "Played/Paused";
-
-            hs.alert.show(text, { durationMs: 400 });
+          if (apex.isRunning) {
+            hs.alert.show("Play/Pause", { durationMs: 400 });
+            hs.media.playPause();
           }
         });
 
         hs.hotkey.bind([], "delete", () => {
-          if (hs.application.isRunning(apexProcessName)) {
+          if (apex.isRunning) {
             hs.media.previousTrack();
           }
         });
 
         hs.hotkey.bind([], "pageup", () => {
-          if (hs.application.isRunning(apexProcessName)) {
+          if (apex.isRunning) {
             hs.media.nextTrack();
           }
         });

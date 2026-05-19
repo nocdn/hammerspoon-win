@@ -25,7 +25,7 @@ public sealed class ToastPresenterTests
     }
 
     [Fact]
-    public void ShowReusesHiddenWindow()
+    public void ShowReusesWarmWindowWithoutHiding()
     {
         var windows = new List<FakeToastView>();
         var positionCount = 0;
@@ -47,8 +47,8 @@ public sealed class ToastPresenterTests
         presenter.Show(second);
 
         var window = Assert.Single(windows);
-        Assert.Equal(2, window.ShowCount);
-        Assert.Equal(1, window.HideCount);
+        Assert.Equal(1, window.ShowCount);
+        Assert.Equal(0, window.HideCount);
         Assert.Equal(0, window.CloseCount);
         Assert.True(window.IsVisible);
         Assert.Equal(2, positionCount);
@@ -56,6 +56,32 @@ public sealed class ToastPresenterTests
             window.Requests,
             request => Assert.Equal(first, request),
             request => Assert.Equal(second, request));
+    }
+
+    [Fact]
+    public void PrewarmShowsWindowOffscreenAndNextToastReusesIt()
+    {
+        FakeToastView? window = null;
+        var positionCount = 0;
+        using var presenter = new ToastPresenter(
+            Dispatcher.CurrentDispatcher,
+            () => window = new FakeToastView(),
+            _ => positionCount++);
+
+        presenter.Prewarm();
+
+        Assert.NotNull(window);
+        Assert.Equal(1, window.ShowCount);
+        Assert.True(window.IsVisible);
+        Assert.True(window.Left < -1000);
+        Assert.True(window.Top < -1000);
+        Assert.Equal(0, positionCount);
+
+        presenter.Show(AlertRequest.Create("Visible", AlertKind.Success, 1000));
+
+        Assert.Equal(1, window.ShowCount);
+        Assert.Equal(1, positionCount);
+        Assert.Equal(2, window.Requests.Count);
     }
 
     [Fact]

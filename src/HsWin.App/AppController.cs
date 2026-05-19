@@ -41,7 +41,7 @@ internal sealed class AppController : IDisposable
         _configFileService = new ConfigFileService(paths.ConfigFilePath);
         _logger = FileLogger.CreateForLaunch(paths.RuntimeLogDirectory);
         _scriptConsoleLogger = new ReloadScriptConsoleLogger(paths.ConfigLogDirectory);
-        _toastPresenter = new ToastPresenter();
+        _toastPresenter = new ToastPresenter(_logger);
         _hotkeyService = new NativeHotkeyService(_logger);
         _keyboardEventService = new NativeKeyboardEventService(_logger);
         _keyboardInputService = new KeyboardInputService(_logger);
@@ -83,6 +83,8 @@ internal sealed class AppController : IDisposable
             _configFileService.EnsureConfigFile();
             _trayIconService.Show();
             _logger.Info("Tray icon shown.");
+            _toastPresenter.Prewarm();
+            _logger.Info("Toast presenter prewarmed.");
             ReloadConfig();
         }
         catch (Exception exception)

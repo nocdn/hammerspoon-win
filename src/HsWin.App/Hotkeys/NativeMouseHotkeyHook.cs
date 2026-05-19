@@ -1,6 +1,7 @@
 using HsWin.Core.Hotkeys;
 using HsWin.Core.Logging;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace HsWin.App.Hotkeys;
@@ -174,11 +175,20 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
     {
         if (_callbackContext is not null)
         {
-            _callbackContext.Post(_ => callback(), null);
+            var queuedAt = Stopwatch.GetTimestamp();
+            _callbackContext.Post(_ =>
+            {
+                var startedAt = Stopwatch.GetTimestamp();
+                _logger.Info($"Mouse hotkey callback started dispatchDelayMs={Stopwatch.GetElapsedTime(queuedAt).TotalMilliseconds:F3}.");
+                callback();
+                _logger.Info($"Mouse hotkey callback returned elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
+            }, null);
             return;
         }
 
+        var directStartedAt = Stopwatch.GetTimestamp();
         callback();
+        _logger.Info($"Mouse hotkey callback returned elapsedMs={Stopwatch.GetElapsedTime(directStartedAt).TotalMilliseconds:F3}.");
     }
 
     private bool HasDuplicateRegistration(HotkeyDefinition hotkey)

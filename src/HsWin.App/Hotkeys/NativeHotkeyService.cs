@@ -1,6 +1,7 @@
 using HsWin.Core.Hotkeys;
 using HsWin.Core.Logging;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -94,8 +95,10 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
     {
         if (_callbacks.TryGetValue(id, out var callback))
         {
+            var startedAt = Stopwatch.GetTimestamp();
             _logger.Info($"Hotkey dispatched id={id}.");
             callback();
+            _logger.Info($"Hotkey callback returned id={id} elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
             return;
         }
 

@@ -1,6 +1,7 @@
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Windows.Media.Control;
 
@@ -60,29 +61,45 @@ internal sealed partial class NativeMediaController : IMediaController
         string fallbackActionName,
         Func<string, string, string> inferAction)
     {
+        var startedAt = Stopwatch.GetTimestamp();
         try
         {
             var manager = GlobalSystemMediaTransportControlsSessionManager.RequestAsync().AsTask().GetAwaiter().GetResult();
+            var managerReadyAt = Stopwatch.GetTimestamp();
             var session = manager.GetCurrentSession();
+            var sessionReadyAt = Stopwatch.GetTimestamp();
             if (session is not null)
             {
                 var statusBefore = GetPlaybackStatus(session);
+                var beforeStatusReadyAt = Stopwatch.GetTimestamp();
                 var success = sessionAction(session);
+                var actionReadyAt = Stopwatch.GetTimestamp();
                 var statusAfter = GetPlaybackStatus(session);
+                var afterStatusReadyAt = Stopwatch.GetTimestamp();
                 var action = inferAction(statusBefore, statusAfter);
-                _logger.Info($"Media session command completed command='{command}' action='{action}' success={success} statusBefore='{statusBefore}' statusAfter='{statusAfter}'.");
+                _logger.Info(
+                    $"Media session timing command='{command}' action='{action}' success={success} statusBefore='{statusBefore}' statusAfter='{statusAfter}' " +
+                    $"requestManagerMs={ElapsedMs(startedAt, managerReadyAt):F3} getSessionMs={ElapsedMs(managerReadyAt, sessionReadyAt):F3} " +
+                    $"statusBeforeMs={ElapsedMs(sessionReadyAt, beforeStatusReadyAt):F3} actionMs={ElapsedMs(beforeStatusReadyAt, actionReadyAt):F3} " +
+                    $"statusAfterMs={ElapsedMs(actionReadyAt, afterStatusReadyAt):F3} totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
                 return new MediaCommandResult(command, success, action, statusBefore, statusAfter, "mediaSession");
             }
 
-            _logger.Info($"No current media session found for command='{command}'. Falling back to media key.");
+            _logger.Info($"No current media session found for command='{command}' elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. Falling back to media key.");
         }
         catch (Exception exception)
         {
-            _logger.Warning($"Media session command failed for command='{command}'. Falling back to media key. {exception.Message}");
+            _logger.Warning($"Media session command failed for command='{command}' elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. Falling back to media key. {exception.Message}");
         }
 
         SendMediaKey(fallbackVirtualKey, fallbackActionName);
+        _logger.Info($"Media fallback timing command='{command}' backend='sendInput' totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
         return MediaCommandResult.Sent(command, "sendInput");
+    }
+
+    private static double ElapsedMs(long startTimestamp, long endTimestamp)
+    {
+        return Stopwatch.GetElapsedTime(startTimestamp, endTimestamp).TotalMilliseconds;
     }
 
     private static string GetPlaybackStatus(GlobalSystemMediaTransportControlsSession session)

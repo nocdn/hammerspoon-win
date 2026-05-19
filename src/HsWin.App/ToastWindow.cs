@@ -40,8 +40,13 @@ internal sealed class ToastWindow : Window, IToastView
 {
     private static readonly MediaBrush WhiteBrush = WpfBrushes.White;
     private static readonly MediaBrush TextBrush = WpfBrushes.Black;
-    private static readonly MediaBrush ErrorBrush = new SolidColorBrush(WpfColor.FromRgb(242, 20, 26));
-    private static readonly MediaBrush SuccessBrush = new SolidColorBrush(WpfColor.FromRgb(22, 163, 74));
+    private static readonly MediaBrush ErrorBrush = CreateFrozenBrush(WpfColor.FromRgb(242, 20, 26));
+    private static readonly MediaBrush SuccessBrush = CreateFrozenBrush(WpfColor.FromRgb(22, 163, 74));
+    private static readonly WpfFontFamily TextFontFamily = new("Segoe UI");
+
+    private readonly PillBorder _border;
+    private readonly Ellipse _dot;
+    private readonly TextBlock _text;
 
     public ToastWindow()
     {
@@ -56,71 +61,81 @@ internal sealed class ToastWindow : Window, IToastView
         Focusable = false;
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
+
+        _dot = CreateDotSlot();
+        _text = CreateText();
+
+        var panel = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        panel.Children.Add(_dot);
+        panel.Children.Add(_text);
+
+        _border = new PillBorder
+        {
+            Background = WhiteBrush,
+            Child = panel
+        };
+        Content = _border;
     }
 
     public Visual PlacementVisual => this;
 
     public void UpdateRequest(AlertRequest request)
     {
-        Content = CreateContent(request);
-    }
+        _text.Text = request.Text;
 
-    private static UIElement CreateContent(AlertRequest request)
-    {
-        var panel = new StackPanel
+        if (request.Kind is AlertKind.Normal)
         {
-            Orientation = WpfOrientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        if (request.Kind is not AlertKind.Normal)
-        {
-            panel.Children.Add(CreateDotSlot(request.Kind));
+            _dot.Visibility = Visibility.Collapsed;
+            _border.Padding = new Thickness(
+                ToastStyleMetrics.NormalHorizontalPadding,
+                ToastStyleMetrics.VerticalPadding,
+                ToastStyleMetrics.NormalHorizontalPadding,
+                ToastStyleMetrics.VerticalPadding);
+            return;
         }
 
-        panel.Children.Add(CreateText(request.Text));
-
-        return new PillBorder
-        {
-            Background = WhiteBrush,
-            Padding = request.Kind is AlertKind.Normal
-                ? new Thickness(
-                    ToastStyleMetrics.NormalHorizontalPadding,
-                    ToastStyleMetrics.VerticalPadding,
-                    ToastStyleMetrics.NormalHorizontalPadding,
-                    ToastStyleMetrics.VerticalPadding)
-                : new Thickness(
-                    ToastStyleMetrics.DotStateLeftPadding,
-                    ToastStyleMetrics.VerticalPadding,
-                    ToastStyleMetrics.DotStateRightPadding,
-                    ToastStyleMetrics.VerticalPadding),
-            Child = panel
-        };
+        _dot.Visibility = Visibility.Visible;
+        _dot.Fill = request.Kind is AlertKind.Error ? ErrorBrush : SuccessBrush;
+        _border.Padding = new Thickness(
+            ToastStyleMetrics.DotStateLeftPadding,
+            ToastStyleMetrics.VerticalPadding,
+            ToastStyleMetrics.DotStateRightPadding,
+            ToastStyleMetrics.VerticalPadding);
     }
 
-    private static UIElement CreateDotSlot(AlertKind kind)
+    private static Ellipse CreateDotSlot()
     {
-        return new Ellipse
+        return new()
         {
             Width = ToastStyleMetrics.DotSize,
             Height = ToastStyleMetrics.DotSize,
-            Fill = kind is AlertKind.Error ? ErrorBrush : SuccessBrush,
             Margin = new Thickness(0, 0, ToastStyleMetrics.DotTextGap, 0),
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
         };
     }
 
-    private static UIElement CreateText(string text)
+    private static TextBlock CreateText()
     {
-        return new TextBlock
+        return new()
         {
-            Text = text,
-            FontFamily = new WpfFontFamily("Segoe UI"),
+            FontFamily = TextFontFamily,
             FontSize = ToastStyleMetrics.TextFontSize,
             FontWeight = ToastStyleMetrics.TextFontWeight,
             Foreground = TextBrush,
             VerticalAlignment = VerticalAlignment.Center
         };
+    }
+
+    private static MediaBrush CreateFrozenBrush(WpfColor color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
     }
 
     private sealed class PillBorder : Border
