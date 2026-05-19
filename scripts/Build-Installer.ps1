@@ -11,10 +11,10 @@ Set-StrictMode -Version Latest
 
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Resolve-Path (Join-Path $scriptRoot "..")
-$projectPath = Join-Path $repoRoot "src\HammerspoonWin.App\HammerspoonWin.App.csproj"
-$installerScriptPath = Join-Path $repoRoot "installer\HammerspoonWin.iss"
+$projectPath = Join-Path $repoRoot "src\HsWin.App\HsWin.App.csproj"
+$installerScriptPath = Join-Path $repoRoot "installer\HsWin.iss"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
-$publishDir = Join-Path $artifactsRoot "publish\HammerspoonWin.App\$Configuration\$RuntimeIdentifier"
+$publishDir = Join-Path $artifactsRoot "publish\HsWin.App\$Configuration\$RuntimeIdentifier"
 $installerOutputDir = Join-Path $artifactsRoot "installer"
 
 if ([string]::IsNullOrWhiteSpace($VersionInfoVersion)) {
@@ -98,16 +98,16 @@ dotnet publish $projectPath `
 
 $iscc = Get-InnoSetupCompiler
 
-$previousVersion = $env:HAMMERSPOONWIN_VERSION
-$previousVersionInfoVersion = $env:HAMMERSPOONWIN_VERSION_INFO_VERSION
-$previousPublishDir = $env:HAMMERSPOONWIN_PUBLISH_DIR
-$previousOutputDir = $env:HAMMERSPOONWIN_OUTPUT_DIR
+$previousVersion = $env:HSWIN_VERSION
+$previousVersionInfoVersion = $env:HSWIN_VERSION_INFO_VERSION
+$previousPublishDir = $env:HSWIN_PUBLISH_DIR
+$previousOutputDir = $env:HSWIN_OUTPUT_DIR
 
 try {
-    $env:HAMMERSPOONWIN_VERSION = $Version
-    $env:HAMMERSPOONWIN_VERSION_INFO_VERSION = $VersionInfoVersion
-    $env:HAMMERSPOONWIN_PUBLISH_DIR = $publishDir
-    $env:HAMMERSPOONWIN_OUTPUT_DIR = $installerOutputDir
+    $env:HSWIN_VERSION = $Version
+    $env:HSWIN_VERSION_INFO_VERSION = $VersionInfoVersion
+    $env:HSWIN_PUBLISH_DIR = $publishDir
+    $env:HSWIN_OUTPUT_DIR = $installerOutputDir
 
     & $iscc $installerScriptPath
     if ($LASTEXITCODE -ne 0) {
@@ -115,13 +115,13 @@ try {
     }
 }
 finally {
-    $env:HAMMERSPOONWIN_VERSION = $previousVersion
-    $env:HAMMERSPOONWIN_VERSION_INFO_VERSION = $previousVersionInfoVersion
-    $env:HAMMERSPOONWIN_PUBLISH_DIR = $previousPublishDir
-    $env:HAMMERSPOONWIN_OUTPUT_DIR = $previousOutputDir
+    $env:HSWIN_VERSION = $previousVersion
+    $env:HSWIN_VERSION_INFO_VERSION = $previousVersionInfoVersion
+    $env:HSWIN_PUBLISH_DIR = $previousPublishDir
+    $env:HSWIN_OUTPUT_DIR = $previousOutputDir
 }
 
-$installerPath = Join-Path $installerOutputDir "HammerspoonWinSetup-$Version-win-x64.exe"
+$installerPath = Join-Path $installerOutputDir "hswin-x64-setup.exe"
 if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "Expected installer was not created: $installerPath"
 }

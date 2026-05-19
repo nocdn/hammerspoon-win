@@ -1,6 +1,6 @@
-# HammerspoonWin
+# Hammerspoon (Windows Edition)
 
-HammerspoonWin is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HammerspoonWin\config.js`, and exposes a small `hs` API to scripts.
+Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HsWin\config.js`, and exposes a small `hs` API to scripts.
 
 ## Current API
 
@@ -61,26 +61,26 @@ Alert types:
 
 ## Projects
 
-- `src/HammerspoonWin.App`: WPF tray application, toast window, startup integration, editor launching.
-- `src/HammerspoonWin.Core`: config file creation, alert contracts, ClearScript runtime.
-- `tests/HammerspoonWin.Core.Tests`: parser, config, and JavaScript bridge tests.
+- `src/HsWin.App`: WPF tray application, toast window, startup integration, editor launching.
+- `src/HsWin.Core`: config file creation, alert contracts, ClearScript runtime.
+- `tests/HsWin.Core.Tests`: parser, config, and JavaScript bridge tests.
 
 ## Logs
 
-- Runtime diagnostics: `%APPDATA%\HammerspoonWin\runtime-logs\MM-dd-yyyy-HH-mm.log`
-- JavaScript console output: `%APPDATA%\HammerspoonWin\config-logs\MM-dd-yyyy-HH-mm.log`
+- Runtime diagnostics: `%APPDATA%\HsWin\runtime-logs\MM-dd-yyyy-HH-mm.log`
+- JavaScript console output: `%APPDATA%\HsWin\config-logs\MM-dd-yyyy-HH-mm.log`
 
 The runtime diagnostics log rotates on every app launch. The JavaScript console log rotates on every config reload.
 
 ## Development
 
 ```powershell
-dotnet build HammerspoonWin.slnx
-dotnet test HammerspoonWin.slnx
+dotnet build HsWin.slnx
+dotnet test HsWin.slnx
 .\scripts\Build-Installer.ps1
 ```
 
-The installer is built with Inno Setup and written to `artifacts\installer`. It installs the published `win-x64` app and shows a checked `Launch HammerSpoon (Windows Edition)` option on the final setup page.
+The installer is built with Inno Setup and written to `artifacts\installer\hswin-x64-setup.exe`. It installs the published `win-x64` app and shows a checked `Launch Hammerspoon (Windows Edition)` option on the final setup page.
 
 ## Releases
 

@@ -36,10 +36,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build
-        run: dotnet build .\HammerspoonWin.slnx --configuration Release
+        run: dotnet build .\HsWin.slnx --configuration Release
 
       - name: Test
-        run: dotnet test .\HammerspoonWin.slnx --configuration Release --no-build
+        run: dotnet test .\HsWin.slnx --configuration Release --no-build
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\Build-Installer.ps1 -Configuration Release -Version $env:RELEASE_VERSION
-          $installerPath = Resolve-Path ".\artifacts\installer\HammerspoonWinSetup-$env:RELEASE_VERSION-win-x64.exe"
+          $installerPath = Resolve-Path ".\artifacts\installer\hswin-x64-setup.exe"
           $installerName = Split-Path -Leaf $installerPath.Path
           "path=$($installerPath.Path)" >> $env:GITHUB_OUTPUT
           "name=$installerName" >> $env:GITHUB_OUTPUT
@@ -76,7 +76,7 @@ jobs:
 
           gh release create $env:RELEASE_TAG `
             "${{ steps.installer.outputs.path }}" `
-            --title "HammerSpoon (Windows Edition) $env:RELEASE_VERSION" `
+            --title "Hammerspoon (Windows Edition) v$env:RELEASE_VERSION" `
             --notes $notes `
             --target $env:GITHUB_SHA `
             --latest
