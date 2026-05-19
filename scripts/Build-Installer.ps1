@@ -1,0 +1,110 @@
+[CmdletBinding()]
+param(
+    [string] $Configuration = "Release",
+    [string] $RuntimeIdentifier = "win-x64",
+    [string] $Version = "0.1.0"
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$scriptRoot = Split-Path -Parent $PSCommandPath
+$repoRoot = Resolve-Path (Join-Path $scriptRoot "..")
+$projectPath = Join-Path $repoRoot "src\HammerspoonWin.App\HammerspoonWin.App.csproj"
+$installerScriptPath = Join-Path $repoRoot "installer\HammerspoonWin.iss"
+$artifactsRoot = Join-Path $repoRoot "artifacts"
+$publishDir = Join-Path $artifactsRoot "publish\HammerspoonWin.App\$Configuration\$RuntimeIdentifier"
+$installerOutputDir = Join-Path $artifactsRoot "installer"
+
+function Assert-ChildPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Parent,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Child
+    )
+
+    $resolvedParent = [System.IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
+    $resolvedChild = [System.IO.Path]::GetFullPath($Child)
+
+    if (-not $resolvedChild.StartsWith($resolvedParent, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to operate on '$resolvedChild' because it is outside '$resolvedParent'."
+    }
+}
+
+function Get-InnoSetupCompiler {
+    $candidates = @()
+
+    if ($env:INNO_SETUP_ISCC) {
+        $candidates += $env:INNO_SETUP_ISCC
+    }
+
+    $pathCommand = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+    if ($pathCommand) {
+        $candidates += $pathCommand.Source
+    }
+
+    $candidates += @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 7\ISCC.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        "C:\Program Files\Inno Setup 7\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    throw "Inno Setup Compiler (ISCC.exe) was not found. Install Inno Setup or set INNO_SETUP_ISCC to the full path of ISCC.exe."
+}
+
+Assert-ChildPath -Parent $repoRoot -Child $publishDir
+Assert-ChildPath -Parent $repoRoot -Child $installerOutputDir
+
+if (Test-Path -LiteralPath $publishDir) {
+    Remove-Item -LiteralPath $publishDir -Recurse -Force
+}
+
+New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+New-Item -ItemType Directory -Path $installerOutputDir -Force | Out-Null
+
+dotnet publish $projectPath `
+    --configuration $Configuration `
+    --runtime $RuntimeIdentifier `
+    --self-contained true `
+    --output $publishDir `
+    -p:PublishSingleFile=false
+
+$iscc = Get-InnoSetupCompiler
+
+$previousVersion = $env:HAMMERSPOONWIN_VERSION
+$previousPublishDir = $env:HAMMERSPOONWIN_PUBLISH_DIR
+$previousOutputDir = $env:HAMMERSPOONWIN_OUTPUT_DIR
+
+try {
+    $env:HAMMERSPOONWIN_VERSION = $Version
+    $env:HAMMERSPOONWIN_PUBLISH_DIR = $publishDir
+    $env:HAMMERSPOONWIN_OUTPUT_DIR = $installerOutputDir
+
+    & $iscc $installerScriptPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup Compiler failed with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    $env:HAMMERSPOONWIN_VERSION = $previousVersion
+    $env:HAMMERSPOONWIN_PUBLISH_DIR = $previousPublishDir
+    $env:HAMMERSPOONWIN_OUTPUT_DIR = $previousOutputDir
+}
+
+$installerPath = Join-Path $installerOutputDir "HammerspoonWinSetup-$Version-win-x64.exe"
+if (-not (Test-Path -LiteralPath $installerPath)) {
+    throw "Expected installer was not created: $installerPath"
+}
+
+Write-Output $installerPath

@@ -15,6 +15,7 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
 
     private readonly MessageWindow _window;
     private readonly IRuntimeLogger _logger;
+    private readonly NativeMouseHotkeyHook _mouseHotkeys;
     private readonly Dictionary<int, Action> _callbacks = [];
     private int _nextId = FirstHotkeyId;
     private bool _disposed;
@@ -27,6 +28,7 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
     public NativeHotkeyService(IRuntimeLogger logger)
     {
         _logger = logger;
+        _mouseHotkeys = new NativeMouseHotkeyHook(_logger);
         _window = new MessageWindow(DispatchHotkey);
         _logger.Info($"Hotkey message window created. HWND=0x{_window.Handle.ToInt64():X}");
     }
@@ -36,6 +38,11 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(hotkey);
         ArgumentNullException.ThrowIfNull(pressed);
+
+        if (hotkey.InputKind == HotkeyInputKind.MouseButton)
+        {
+            return _mouseHotkeys.Register(hotkey, pressed);
+        }
 
         var id = AllocateId();
         var modifierFlags = (uint)(hotkey.Modifiers | HotkeyModifiers.NoRepeat);
@@ -64,6 +71,9 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         {
             Unregister(id);
         }
+
+        _mouseHotkeys.Dispose();
+        _logger.Info("Mouse hotkey service disposed.");
 
         _window.DestroyHandle();
         _logger.Info("Hotkey message window destroyed.");

@@ -1,8 +1,10 @@
 using HammerspoonWin.Core.Alerts;
+using HammerspoonWin.Core.Applications;
 using HammerspoonWin.Core.Config;
 using HammerspoonWin.Core.Logging;
 using HammerspoonWin.Core.Scripting;
 using HammerspoonWin.App.Hotkeys;
+using HammerspoonWin.App.Media;
 using System.Reflection;
 using WpfApplication = System.Windows.Application;
 
@@ -29,7 +31,13 @@ internal sealed class AppController : IDisposable
         _scriptConsoleLogger = new ReloadScriptConsoleLogger(paths.ConfigLogDirectory);
         _toastPresenter = new ToastPresenter();
         _hotkeyService = new NativeHotkeyService(_logger);
-        _scriptRuntime = new ScriptRuntime(_toastPresenter, _hotkeyService, _scriptConsoleLogger);
+        _scriptRuntime = new ScriptRuntime(
+            _toastPresenter,
+            _hotkeyService,
+            _scriptConsoleLogger,
+            new ProcessApplicationProvider(_logger),
+            new NativeMediaController(_logger),
+            _logger);
         _startupService = new StartupService("HammerspoonWin", ResolveExecutablePath());
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,

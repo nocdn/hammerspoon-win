@@ -15,4 +15,6 @@
   - Kill any currently running `HammerspoonWin.App` instances.
   - `dotnet build HammerspoonWin.slnx`
   - `dotnet test HammerspoonWin.slnx`
-  - If build and tests pass after code changes, launch the app for manual testing with `dotnet run --project .\src\HammerspoonWin.App\HammerspoonWin.App.csproj`.
+  - If build and tests pass after code changes, create the installer with `.\scripts\Build-Installer.ps1`.
+  - Launch the generated installer from `artifacts\installer` for manual testing instead of starting the app with `dotnet run`.
+  - The installer uses Inno Setup, so `ISCC.exe` must be installed or `INNO_SETUP_ISCC` must point to it.

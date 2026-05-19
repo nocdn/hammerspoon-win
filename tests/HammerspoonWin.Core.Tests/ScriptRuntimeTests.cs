@@ -1,6 +1,8 @@
 using HammerspoonWin.Core.Alerts;
+using HammerspoonWin.Core.Applications;
 using HammerspoonWin.Core.Hotkeys;
 using HammerspoonWin.Core.Logging;
+using HammerspoonWin.Core.Media;
 using HammerspoonWin.Core.Scripting;
 
 namespace HammerspoonWin.Core.Tests;
@@ -80,6 +82,24 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadRegistersMouseHotkeyBindings()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        using var runtime = new ScriptRuntime(presenter, hotkeys);
+
+        runtime.Reload("""hs.hotkey.bind(["ctrl"], "mouse.back", () => hs.alert.show("Mouse"));""");
+        hotkeys.TriggerOnlyRegistration();
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("Mouse", request.Text);
+        var registration = Assert.Single(hotkeys.Registrations);
+        Assert.Equal(HotkeyInputKind.MouseButton, registration.Hotkey.InputKind);
+        Assert.Equal(HotkeyModifiers.Control, registration.Hotkey.Modifiers);
+        Assert.Equal(HotkeyMouseButton.XButton1, registration.Hotkey.MouseButton);
+    }
+
+    [Fact]
     public void ReloadDisposesPreviousHotkeyBindings()
     {
         var presenter = new CapturingAlertPresenter();
@@ -147,6 +167,134 @@ public sealed class ScriptRuntimeTests
         Assert.Equal("05-19-2026-13-47-2.log", Path.GetFileName(secondPath));
     }
 
+    [Fact]
+    public void ReloadExposesApplicationIsRunning()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "r5apex", "Apex Legends", @"C:\Games\Apex\r5apex.exe"));
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            applications,
+            NullMediaController.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            if (hs.application.isRunning("r5apex.exe")) {
+              hs.alert.show("Apex is running");
+            }
+            """);
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("Apex is running", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesRunningApplications()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "chrome", "Chrome", @"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            new ApplicationSnapshot(456, "r5apex", "Apex Legends", @"C:\Games\Apex\r5apex.exe"));
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            applications,
+            NullMediaController.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const apps = hs.application.runningApplications();
+            const apex = apps.find(app => app.processName === "r5apex");
+            hs.alert.show(`${apps.length}:${apex.pid}:${apex.path}`, "normal", 1);
+            """);
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal(@"2:456:C:\Games\Apex\r5apex.exe", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesMediaControls()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var media = new CapturingMediaController();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            media,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            hs.media.playPause();
+            hs.media.previousTrack();
+            hs.media.nextTrack();
+            """);
+
+        Assert.Equal(["playPause", "previousTrack", "nextTrack"], media.Actions);
+    }
+
+    [Fact]
+    public void ReloadExposesMediaCommandResult()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var media = new CapturingMediaController
+        {
+            PlayPauseResult = new MediaCommandResult("playPause", true, "paused", "playing", "paused", "mediaSession")
+        };
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            media,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const result = hs.media.playPause();
+            hs.alert.show(`${result.action}:${result.statusBefore}:${result.statusAfter}:${result.success}`, "normal", 1);
+            """);
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("paused:playing:paused:true", request.Text);
+    }
+
+    [Fact]
+    public void HotkeysCanTriggerMediaControls()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "TOTClient-Win64-Shipping", "The Outlast Trials", null));
+        var media = new CapturingMediaController();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            applications,
+            media,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            const outlastProcessName = "TOTClient-Win64-Shipping.exe";
+            hs.hotkey.bind([], "`", () => {
+              if (hs.application.isRunning(outlastProcessName)) hs.media.playPause();
+            });
+            """);
+
+        hotkeys.TriggerOnlyRegistration();
+
+        Assert.Equal(["playPause"], media.Actions);
+    }
+
     private sealed class CapturingAlertPresenter : IAlertPresenter
     {
         public List<AlertRequest> Requests { get; } = [];
@@ -196,6 +344,54 @@ public sealed class ScriptRuntimeTests
         public void Dispose()
         {
             IsDisposed = true;
+        }
+    }
+
+    private sealed class CapturingApplicationProvider : IApplicationProvider
+    {
+        private readonly IReadOnlyList<ApplicationSnapshot> _applications;
+
+        public CapturingApplicationProvider(params ApplicationSnapshot[] applications)
+        {
+            _applications = applications;
+        }
+
+        public bool IsRunning(string processName)
+        {
+            var normalizedName = ProcessNameMatcher.Normalize(processName);
+            return _applications.Any(application =>
+                string.Equals(application.ProcessName, normalizedName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
+        {
+            return _applications;
+        }
+    }
+
+    private sealed class CapturingMediaController : IMediaController
+    {
+        public List<string> Actions { get; } = [];
+
+        public MediaCommandResult PlayPauseResult { get; init; } =
+            new("playPause", true, "played", "paused", "playing", "mediaSession");
+
+        public MediaCommandResult PlayPause()
+        {
+            Actions.Add("playPause");
+            return PlayPauseResult;
+        }
+
+        public MediaCommandResult PreviousTrack()
+        {
+            Actions.Add("previousTrack");
+            return MediaCommandResult.Sent("previousTrack", "test");
+        }
+
+        public MediaCommandResult NextTrack()
+        {
+            Actions.Add("nextTrack");
+            return MediaCommandResult.Sent("nextTrack", "test");
         }
     }
 }

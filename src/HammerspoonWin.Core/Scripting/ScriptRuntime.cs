@@ -1,6 +1,8 @@
 using HammerspoonWin.Core.Alerts;
+using HammerspoonWin.Core.Applications;
 using HammerspoonWin.Core.Hotkeys;
 using HammerspoonWin.Core.Logging;
+using HammerspoonWin.Core.Media;
 using Microsoft.ClearScript.V8;
 
 namespace HammerspoonWin.Core.Scripting;
@@ -45,6 +47,30 @@ public sealed class ScriptRuntime : IDisposable
               bind(modifiers, key, pressedFn) {
                 return host.BindHotkey(modifiers, key, pressedFn);
               }
+            }),
+
+            application: Object.freeze({
+              isRunning(processName) {
+                return host.IsApplicationRunning(processName);
+              },
+
+              runningApplications() {
+                return JSON.parse(host.GetRunningApplicationsJson());
+              }
+            }),
+
+            media: Object.freeze({
+              playPause() {
+                return JSON.parse(host.MediaPlayPauseJson());
+              },
+
+              previousTrack() {
+                return JSON.parse(host.MediaPreviousTrackJson());
+              },
+
+              nextTrack() {
+                return JSON.parse(host.MediaNextTrackJson());
+              }
             })
           });
 
@@ -71,25 +97,54 @@ public sealed class ScriptRuntime : IDisposable
     private readonly IAlertPresenter _alerts;
     private readonly IHotkeyRegistrar _hotkeys;
     private readonly IScriptConsoleLogger _console;
+    private readonly IApplicationProvider _applications;
+    private readonly IMediaController _media;
+    private readonly IRuntimeLogger _logger;
     private readonly List<IDisposable> _runtimeResources = [];
     private V8ScriptEngine? _engine;
     private bool _disposed;
 
     public ScriptRuntime(IAlertPresenter alerts)
-        : this(alerts, NullHotkeyRegistrar.Instance, NullScriptConsoleLogger.Instance)
+        : this(
+            alerts,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullRuntimeLogger.Instance)
     {
     }
 
     public ScriptRuntime(IAlertPresenter alerts, IHotkeyRegistrar hotkeys)
-        : this(alerts, hotkeys, NullScriptConsoleLogger.Instance)
+        : this(
+            alerts,
+            hotkeys,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullRuntimeLogger.Instance)
     {
     }
 
     public ScriptRuntime(IAlertPresenter alerts, IHotkeyRegistrar hotkeys, IScriptConsoleLogger console)
+        : this(alerts, hotkeys, console, NullApplicationProvider.Instance, NullMediaController.Instance, NullRuntimeLogger.Instance)
+    {
+    }
+
+    public ScriptRuntime(
+        IAlertPresenter alerts,
+        IHotkeyRegistrar hotkeys,
+        IScriptConsoleLogger console,
+        IApplicationProvider applications,
+        IMediaController media,
+        IRuntimeLogger logger)
     {
         _alerts = alerts;
         _hotkeys = hotkeys;
         _console = console;
+        _applications = applications;
+        _media = media;
+        _logger = logger;
     }
 
     public void ReloadFromFile(string filePath)
@@ -116,7 +171,14 @@ public sealed class ScriptRuntime : IDisposable
         {
             engine.AddHostObject(
                 "__hammerspoonWinHost",
-                new HammerspoonScriptHost(_alerts, _hotkeys, _console, newRuntimeResources.Add));
+                new HammerspoonScriptHost(
+                    _alerts,
+                    _hotkeys,
+                    _console,
+                    _applications,
+                    _media,
+                    _logger,
+                    newRuntimeResources.Add));
             engine.Execute("hammerspoon-win:bootstrap", BootstrapScript);
             engine.Execute(documentName, source);
             _engine = engine;
