@@ -14,10 +14,14 @@ public static class KeyboardScriptOptionsParser
         }
 
         var includeInjected = ScriptArgumentReader.GetPropertyValue(value, "includeInjected");
+        var blocking = ScriptArgumentReader.GetPropertyValue(value, "blocking", "synchronous", "sync", "swallow");
         return new KeyboardEventWatchOptions(
             ScriptArgumentReader.IsMissing(includeInjected)
                 ? KeyboardEventWatchOptions.Default.IncludeInjected
-                : Convert.ToBoolean(includeInjected, CultureInfo.InvariantCulture));
+                : Convert.ToBoolean(includeInjected, CultureInfo.InvariantCulture),
+            ScriptArgumentReader.IsMissing(blocking)
+                ? KeyboardEventWatchOptions.Default.Blocking
+                : Convert.ToBoolean(blocking, CultureInfo.InvariantCulture));
     }
 
     public static KeyboardTapOptions ParseTapOptions(object? value)

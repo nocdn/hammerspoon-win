@@ -11,6 +11,7 @@ public sealed class KeyboardScriptOptionsParserTests
         var options = KeyboardScriptOptionsParser.ParseWatchOptions(null);
 
         Assert.False(options.IncludeInjected);
+        Assert.False(options.Blocking);
     }
 
     [Fact]
@@ -20,6 +21,27 @@ public sealed class KeyboardScriptOptionsParserTests
             new Dictionary<string, object?> { ["includeInjected"] = true });
 
         Assert.True(options.IncludeInjected);
+    }
+
+    [Fact]
+    public void ParseWatchOptionsReadsBlocking()
+    {
+        var options = KeyboardScriptOptionsParser.ParseWatchOptions(
+            new Dictionary<string, object?> { ["blocking"] = true });
+
+        Assert.True(options.Blocking);
+    }
+
+    [Theory]
+    [InlineData("synchronous")]
+    [InlineData("sync")]
+    [InlineData("swallow")]
+    public void ParseWatchOptionsReadsBlockingAliases(string optionName)
+    {
+        var options = KeyboardScriptOptionsParser.ParseWatchOptions(
+            new Dictionary<string, object?> { [optionName] = true });
+
+        Assert.True(options.Blocking);
     }
 
     [Fact]

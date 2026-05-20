@@ -6,6 +6,7 @@ using HsWin.Core.Hotkeys;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
+using HsWin.Core.Mouse;
 using HsWin.Core.Shell;
 using HsWin.Core.Timers;
 
@@ -36,6 +37,8 @@ public sealed record ScriptRuntimeServices
     public IShellService Shell { get; init; } = NullShellService.Instance;
 
     public IAudioDeviceController AudioDevices { get; init; } = NullAudioDeviceController.Instance;
+
+    public IMouseService Mouse { get; init; } = NullMouseService.Instance;
 
     public IRuntimeLogger Logger { get; init; } = NullRuntimeLogger.Instance;
 }

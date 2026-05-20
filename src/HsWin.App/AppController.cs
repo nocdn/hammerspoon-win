@@ -9,6 +9,7 @@ using HsWin.App.Hotkeys;
 using HsWin.App.Input;
 using HsWin.App.Keyboard;
 using HsWin.App.Media;
+using HsWin.App.Mouse;
 using HsWin.App.Scripting;
 using HsWin.App.Shell;
 using HsWin.App.Timers;
@@ -33,6 +34,7 @@ internal sealed class AppController : IDisposable
     private readonly NativeClipboardService _clipboardService;
     private readonly ProcessShellService _shellService;
     private readonly NativeAudioDeviceController _audioDeviceController;
+    private readonly NativeMouseService _mouseService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
     private readonly TrayIconService _trayIconService;
@@ -57,6 +59,7 @@ internal sealed class AppController : IDisposable
         _clipboardService = new NativeClipboardService(WpfApplication.Current.Dispatcher, _logger);
         _shellService = new ProcessShellService(_logger);
         _audioDeviceController = new NativeAudioDeviceController(_logger);
+        _mouseService = new NativeMouseService();
         _scriptRuntime = new ScriptRuntime(new ScriptRuntimeServices
         {
             Alerts = _toastPresenter,
@@ -71,6 +74,7 @@ internal sealed class AppController : IDisposable
             Clipboard = _clipboardService,
             Shell = _shellService,
             AudioDevices = _audioDeviceController,
+            Mouse = _mouseService,
             Logger = _logger
         });
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
@@ -212,6 +216,7 @@ internal sealed class AppController : IDisposable
         _singleInstanceGuard.Dispose();
         _logger.Info("Single instance guard disposed.");
         _disposed = true;
+        _logger.Dispose();
     }
 
     private void SetStartAtLoginEnabled(bool enabled)

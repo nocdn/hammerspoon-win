@@ -216,21 +216,48 @@ hs.sound.toggleMute();
 
 Device objects have `id`, `name`, `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. The `set*` and `toggleMute()` methods return a volume snapshot (`id`, `name`, `volume`, `muted`). Module-level `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)` use the default output device when `deviceId` is omitted. Volume is 0–100.
 
+### `hs.mouse.getCurrentScreen()`, `hs.mouse.isOnPrimaryScreen()`
+
+Returns the Windows monitor containing the current mouse cursor, or `null` if the host cannot resolve it.
+
+```js
+const screen = hs.mouse.getCurrentScreen();
+
+if (screen) {
+  console.log(screen.id, screen.name, screen.isPrimary);
+  console.log(screen.mousePosition.x, screen.mousePosition.y);
+  console.log(screen.bounds.x, screen.bounds.y, screen.bounds.width, screen.bounds.height);
+}
+
+if (hs.mouse.isOnPrimaryScreen()) {
+  hs.alert.show("Mouse is on the primary monitor", { durationMs: 800 });
+}
+```
+
+Screen snapshots have `id`, `name`, `isPrimary`, `mousePosition`, `bounds`, and `workingArea`. Rectangle fields use Windows virtual desktop pixels, so monitors left of or above the primary display can have negative `x`/`y` values. `isOnPrimaryScreen()` is a shortcut for checking whether the current cursor monitor is primary.
+
 ### `hs.keyboard.watch(callback, options?)`
 
-Subscribes to global keyboard events. The callback receives a plain JavaScript object and may return `true` to swallow the physical event so the active app does not receive it.
+Subscribes to global keyboard events. Watchers are non-blocking by default: callbacks run off the Windows keyboard hook path, so they can observe input without delaying keystrokes. Non-blocking callbacks cannot swallow input; returning `true` is ignored and logged as a warning.
+
+Use `{ blocking: true }` only for watchers that must return `true` to swallow the physical event so the active app does not receive it. Blocking watchers run on the keyboard hook path, so keep their callbacks tiny and move slow work to `hs.timer.doAfter`, `hs.task.run`, or a normal hotkey callback.
 
 ```js
 const watcher = hs.keyboard.watch(event => {
+  console.log(event.key);
+});
+
+const blocker = hs.keyboard.watch(event => {
   if (event.type === "keydown" && event.key === "w" && event.modifiers.includes("alt")) {
     hs.alert.show("Alt+W");
     return true;
   }
 
   return false;
-});
+}, { blocking: true });
 
 watcher.stop();
+blocker.stop();
 ```
 
 Returns a handle with `stop()`, `dispose()`, and `delete()` (any casing). Config reload stops active watchers automatically.
@@ -244,6 +271,7 @@ Options:
 | Option | Default | Description |
 | --- | --- | --- |
 | `includeInjected` | `false` | When `true`, callbacks also receive synthetic events. |
+| `blocking` | `false` | When `true`, the callback runs synchronously on the keyboard hook path and may return `true` to swallow the event. Aliases are `synchronous`, `sync`, and `swallow`. |
 
 ### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
 
@@ -377,7 +405,7 @@ hs.keyboard.watch(event => {
   }
 
   return false;
-});
+}, { blocking: true });
 
 const apex = {
   processName: "r5apex_dx12.exe",

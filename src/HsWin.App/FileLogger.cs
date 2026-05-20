@@ -1,17 +1,28 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.IO;
+using HsWin.Core.Logging;
+
 namespace HsWin.App;
 
-using HsWin.Core.Logging;
-using System.IO;
-
-internal sealed class FileLogger : IRuntimeLogger
+internal sealed class FileLogger : IRuntimeLogger, IDisposable
 {
     private readonly string _logFilePath;
-    private readonly object _gate = new();
+    private readonly BlockingCollection<LogEntry> _entries = [];
+    private readonly Thread _worker;
+    private int _disposed;
 
     private FileLogger(string logFilePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(logFilePath);
         _logFilePath = logFilePath;
+        EnsureLogFile();
+        _worker = new Thread(WriteQueuedEntries)
+        {
+            IsBackground = true,
+            Name = "HsWin Runtime Logger"
+        };
+        _worker.Start();
     }
 
     public string LogFilePath => _logFilePath;
@@ -40,17 +51,78 @@ internal sealed class FileLogger : IRuntimeLogger
     {
         try
         {
-            lock (_gate)
+            if (Volatile.Read(ref _disposed) != 0)
             {
-                var directory = Path.GetDirectoryName(_logFilePath);
-                if (!string.IsNullOrWhiteSpace(directory))
+                return;
+            }
+
+            _entries.Add(new LogEntry(DateTimeOffset.Now, level, message, exception));
+        }
+        catch
+        {
+            // Logging must never break the tray app or script reload loop.
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _entries.CompleteAdding();
+            _worker.Join(TimeSpan.FromSeconds(2));
+        }
+        catch
+        {
+            // Logging shutdown must not block app shutdown.
+        }
+        finally
+        {
+            _entries.Dispose();
+        }
+    }
+
+    private void EnsureLogFile()
+    {
+        var directory = Path.GetDirectoryName(_logFilePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        using var _ = new FileStream(
+            _logFilePath,
+            FileMode.OpenOrCreate,
+            FileAccess.Write,
+            FileShare.ReadWrite);
+    }
+
+    private void WriteQueuedEntries()
+    {
+        try
+        {
+            using var stream = new FileStream(
+                _logFilePath,
+                FileMode.Append,
+                FileAccess.Write,
+                FileShare.ReadWrite,
+                bufferSize: 16 * 1024,
+                FileOptions.SequentialScan);
+            using var writer = new StreamWriter(stream);
+
+            foreach (var entry in _entries.GetConsumingEnumerable())
+            {
+                WriteEntry(writer, entry);
+                while (_entries.TryTake(out var nextEntry))
                 {
-                    Directory.CreateDirectory(directory);
+                    WriteEntry(writer, nextEntry);
                 }
 
-                File.AppendAllText(
-                    _logFilePath,
-                    $"{DateTimeOffset.Now:O} [{level}] {message}{Environment.NewLine}{exception}{Environment.NewLine}");
+                writer.Flush();
             }
         }
         catch
@@ -58,4 +130,20 @@ internal sealed class FileLogger : IRuntimeLogger
             // Logging must never break the tray app or script reload loop.
         }
     }
+
+    private static void WriteEntry(TextWriter writer, LogEntry entry)
+    {
+        writer.Write(entry.Timestamp.ToString("O", CultureInfo.InvariantCulture));
+        writer.Write(" [");
+        writer.Write(entry.Level);
+        writer.Write("] ");
+        writer.WriteLine(entry.Message);
+        writer.WriteLine(entry.Exception);
+    }
+
+    private sealed record LogEntry(
+        DateTimeOffset Timestamp,
+        string Level,
+        string Message,
+        Exception? Exception);
 }

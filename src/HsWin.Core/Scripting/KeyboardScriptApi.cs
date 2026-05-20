@@ -42,12 +42,23 @@ public sealed class KeyboardScriptApi
             {
                 var eventJson = ScriptJson.Serialize(keyboardEvent);
                 var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
-                return Convert.ToBoolean(result, CultureInfo.InvariantCulture);
+                var requestedSwallow = Convert.ToBoolean(result, CultureInfo.InvariantCulture);
+                if (parsedOptions.Blocking)
+                {
+                    return requestedSwallow;
+                }
+
+                if (requestedSwallow)
+                {
+                    _logger.Warning("Non-blocking hs.keyboard.watch() callback returned true; use { blocking: true } when a watcher must swallow keyboard input.");
+                }
+
+                return false;
             });
 
         var handle = new ScriptResourceHandle(registration);
         _trackResource(handle);
-        _logger.Info($"Script hs.keyboard.watch() registered includeInjected={parsedOptions.IncludeInjected}.");
+        _logger.Info($"Script hs.keyboard.watch() registered includeInjected={parsedOptions.IncludeInjected} blocking={parsedOptions.Blocking}.");
         return handle;
     }
 

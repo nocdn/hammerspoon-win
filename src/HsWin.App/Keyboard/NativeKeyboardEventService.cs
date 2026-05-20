@@ -24,16 +24,27 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private readonly object _gate = new();
     private readonly IRuntimeLogger _logger;
     private readonly HookProcedure _hookProcedure;
+    private readonly KeyboardWatchDispatcher _watchDispatcher;
     private readonly KeyboardModifierTracker _modifierTracker = new();
-    private readonly List<Subscription> _subscriptions = [];
+    private readonly List<KeyboardWatchSubscription> _subscriptions = [];
 
     private IntPtr _hookHandle;
     private bool _disposed;
     private long _nextSubscriptionId;
 
     public NativeKeyboardEventService(IRuntimeLogger logger)
+        : this(
+            logger,
+            new KeyboardWatchDispatcher(
+                logger,
+                new SynchronizationContextKeyboardWatchCallbackScheduler(SynchronizationContext.Current)))
+    {
+    }
+
+    internal NativeKeyboardEventService(IRuntimeLogger logger, KeyboardWatchDispatcher watchDispatcher)
     {
         _logger = logger;
+        _watchDispatcher = watchDispatcher;
         _hookProcedure = HookCallback;
     }
 
@@ -47,14 +58,14 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         {
             EnsureHookInstalled();
 
-            var subscription = new Subscription(
+            var subscription = new KeyboardWatchSubscription(
                 Interlocked.Increment(ref _nextSubscriptionId),
                 options,
                 callback,
                 RemoveSubscription);
             _subscriptions.Add(subscription);
             _logger.Info(
-                $"Keyboard watch registered id={subscription.Id} includeInjected={options.IncludeInjected} count={_subscriptions.Count}.");
+                $"Keyboard watch registered id={subscription.Id} includeInjected={options.IncludeInjected} blocking={options.Blocking} count={_subscriptions.Count}.");
             return subscription;
         }
     }
@@ -96,7 +107,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         var hookData = Marshal.PtrToStructure<KeyboardHookStruct>(lParam);
         var isKeyUp = IsKeyUpMessage(message, hookData.Flags);
         var isInjected = IsInjectedEvent(hookData);
-        Subscription[] subscriptions;
+        KeyboardWatchSubscription[] subscriptions;
         KeyboardEventSnapshot snapshot;
 
         lock (_gate)
@@ -115,23 +126,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             subscriptions = [.. _subscriptions];
         }
 
-        var shouldSwallow = false;
-        foreach (var subscription in subscriptions)
-        {
-            if (subscription.IsDisposed || (isInjected && !subscription.Options.IncludeInjected))
-            {
-                continue;
-            }
-
-            try
-            {
-                shouldSwallow |= subscription.Callback(snapshot);
-            }
-            catch (Exception exception)
-            {
-                _logger.Error($"Keyboard watch callback failed id={subscription.Id}.", exception);
-            }
-        }
+        var shouldSwallow = _watchDispatcher.Dispatch(snapshot, subscriptions);
 
         return shouldSwallow
             ? new IntPtr(1)
@@ -154,7 +149,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             IsExtended: KeyboardKeyRules.IsExtendedVirtualKey(virtualKey));
     }
 
-    private void RemoveSubscription(Subscription subscription)
+    private void RemoveSubscription(KeyboardWatchSubscription subscription)
     {
         lock (_gate)
         {
@@ -233,48 +228,6 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         public uint Time;
 
         public UIntPtr ExtraInfo;
-    }
-
-    private sealed class Subscription : IDisposable
-    {
-        private readonly Action<Subscription> _dispose;
-        private bool _disposed;
-
-        public Subscription(
-            long id,
-            KeyboardEventWatchOptions options,
-            Func<KeyboardEventSnapshot, bool> callback,
-            Action<Subscription> dispose)
-        {
-            Id = id;
-            Options = options;
-            Callback = callback;
-            _dispose = dispose;
-        }
-
-        public long Id { get; }
-
-        public KeyboardEventWatchOptions Options { get; }
-
-        public Func<KeyboardEventSnapshot, bool> Callback { get; }
-
-        public bool IsDisposed => _disposed;
-
-        public void Dispose()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
-            _dispose(this);
-        }
-
-        public void MarkDisposed()
-        {
-            _disposed = true;
-        }
     }
 
     private delegate IntPtr HookProcedure(int code, IntPtr wParam, IntPtr lParam);

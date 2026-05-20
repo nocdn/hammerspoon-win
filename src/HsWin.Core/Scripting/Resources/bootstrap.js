@@ -178,6 +178,16 @@
     audiodevice,
     sound,
 
+    mouse: Object.freeze({
+      getCurrentScreen() {
+        return parseJson(host.Mouse.GetCurrentScreenJson());
+      },
+
+      isOnPrimaryScreen() {
+        return host.Mouse.IsOnPrimaryScreen();
+      }
+    }),
+
     keyboard: Object.freeze({
       watch(callback, options) {
         if (typeof callback !== "function") {

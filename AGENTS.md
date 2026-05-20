@@ -21,3 +21,4 @@
   This loop applies to all app/UI changes the user will want to see in the running product—not only release-sized work.
 - The installer uses Inno Setup, so `ISCC.exe` must be installed or `INNO_SETUP_ISCC` must point to it.
 - GitHub Actions release publishing lives in `.github/workflows/release.yml`; releases are normal non-prerelease releases, tagged with the Actions run number.
+- Make sure all code that you write, change, modify, add, etc is maintainable and high quality. We don't want technical debt so don't be lazy.

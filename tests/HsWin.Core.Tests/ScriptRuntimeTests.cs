@@ -7,6 +7,7 @@ using HsWin.Core.Hotkeys;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
+using HsWin.Core.Mouse;
 using HsWin.Core.Scripting;
 using HsWin.Core.Shell;
 using HsWin.Core.Timers;
@@ -484,6 +485,66 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesMouseCurrentScreen()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var mouse = new CapturingMouseService(
+            new MouseScreenSnapshot(
+                "display-2",
+                "Right Monitor",
+                IsPrimary: false,
+                new MousePointSnapshot(1930, 50),
+                new MouseRectangleSnapshot(1920, 0, 2560, 1440),
+                new MouseRectangleSnapshot(1920, 0, 2560, 1400)));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Mouse = mouse
+        });
+
+        runtime.Reload("""
+            const screen = hs.mouse.getCurrentScreen();
+            hs.alert.show(
+              `${screen.id}:${screen.name}:${screen.isPrimary}:${screen.mousePosition.x},${screen.mousePosition.y}:${screen.bounds.width}x${screen.bounds.height}`,
+              "normal",
+              1);
+            """);
+
+        Assert.Equal(1, mouse.GetCurrentScreenCallCount);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("display-2:Right Monitor:false:1930,50:2560x1440", request.Text);
+    }
+
+    [Theory]
+    [InlineData(true, "true")]
+    [InlineData(false, "false")]
+    public void ReloadExposesMousePrimaryScreenShortcut(bool isPrimary, string expectedText)
+    {
+        var presenter = new CapturingAlertPresenter();
+        var mouse = new CapturingMouseService(
+            new MouseScreenSnapshot(
+                "display-1",
+                "Primary Monitor",
+                isPrimary,
+                new MousePointSnapshot(10, 20),
+                new MouseRectangleSnapshot(0, 0, 1920, 1080),
+                new MouseRectangleSnapshot(0, 0, 1920, 1040)));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Mouse = mouse
+        });
+
+        runtime.Reload("""
+            hs.alert.show(String(hs.mouse.isOnPrimaryScreen()), "normal", 1);
+            """);
+
+        Assert.Equal(1, mouse.GetCurrentScreenCallCount);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal(expectedText, request.Text);
+    }
+
+    [Fact]
     public void ReloadExposesMediaControls()
     {
         var presenter = new CapturingAlertPresenter();
@@ -586,7 +647,7 @@ public sealed class ScriptRuntimeTests
               }
 
               return false;
-            });
+            }, { blocking: true });
             """);
 
         var watch = Assert.Single(keyboardEvents.Watches);
@@ -608,6 +669,110 @@ public sealed class ScriptRuntimeTests
         var tap = Assert.Single(keyboardInput.Taps);
         Assert.Equal((uint)'W', tap.VirtualKey);
         Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, tap.Options.SuppressPhysicalModifiers);
+    }
+
+    [Fact]
+    public void KeyboardWatchDefaultsToNonBlockingAndCannotSwallow()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        var logger = new CapturingRuntimeLogger();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            logger);
+
+        runtime.Reload("""
+            hs.keyboard.watch(event => {
+              hs.alert.show(event.key, "normal", 1);
+              return true;
+            });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.False(watch.Options.Blocking);
+        var swallowed = watch.Callback(
+            new KeyboardEventSnapshot(
+                "keydown",
+                (uint)'A',
+                "a",
+                [],
+                0,
+                IsKeyDown: true,
+                IsKeyUp: false,
+                IsModifier: false,
+                IsInjected: false,
+                IsExtended: false));
+
+        Assert.False(swallowed);
+        Assert.Equal("a", Assert.Single(presenter.Requests).Text);
+        Assert.Contains(logger.Warnings, warning => warning.Contains("Non-blocking hs.keyboard.watch", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void KeyboardWatchBlockingOptionCanSwallow()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(
+            presenter,
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""
+            hs.keyboard.watch(() => true, { blocking: true });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.True(watch.Options.Blocking);
+        var swallowed = watch.Callback(
+            new KeyboardEventSnapshot(
+                "keydown",
+                (uint)'A',
+                "a",
+                [],
+                0,
+                IsKeyDown: true,
+                IsKeyUp: false,
+                IsModifier: false,
+                IsInjected: false,
+                IsExtended: false));
+
+        Assert.True(swallowed);
+    }
+
+    [Fact]
+    public void KeyboardWatchParsesIncludeInjectedAndBlockingTogether()
+    {
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(
+            new CapturingAlertPresenter(),
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""hs.keyboard.watch(() => false, { includeInjected: true, blocking: true });""");
+
+        var options = Assert.Single(keyboardEvents.Watches).Options;
+        Assert.True(options.IncludeInjected);
+        Assert.True(options.Blocking);
     }
 
     [Fact]
@@ -915,6 +1080,24 @@ public sealed class ScriptRuntimeTests
         }
     }
 
+    private sealed class CapturingMouseService : IMouseService
+    {
+        private readonly MouseScreenSnapshot? _screen;
+
+        public CapturingMouseService(MouseScreenSnapshot? screen)
+        {
+            _screen = screen;
+        }
+
+        public int GetCurrentScreenCallCount { get; private set; }
+
+        public MouseScreenSnapshot? GetCurrentScreen()
+        {
+            GetCurrentScreenCallCount++;
+            return _screen;
+        }
+    }
+
     private sealed class CapturingKeyboardEventService : IKeyboardEventService
     {
         public List<CapturingKeyboardWatch> Watches { get; } = [];
@@ -1025,6 +1208,30 @@ public sealed class ScriptRuntimeTests
         public void Dispose()
         {
             IsDisposed = true;
+        }
+    }
+
+    private sealed class CapturingRuntimeLogger : IRuntimeLogger
+    {
+        public List<string> Infos { get; } = [];
+
+        public List<string> Warnings { get; } = [];
+
+        public List<string> Errors { get; } = [];
+
+        public void Info(string message)
+        {
+            Infos.Add(message);
+        }
+
+        public void Warning(string message)
+        {
+            Warnings.Add(message);
+        }
+
+        public void Error(string message, Exception exception)
+        {
+            Errors.Add($"{message} {exception.Message}");
         }
     }
 

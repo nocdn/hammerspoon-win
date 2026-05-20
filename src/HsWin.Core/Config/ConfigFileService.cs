@@ -93,7 +93,7 @@ public sealed class ConfigFileService
           }
 
           return false;
-        });
+        }, { blocking: true });
 
         const apex = {
           processName: "r5apex_dx12.exe",
@@ -142,6 +142,8 @@ public sealed class ConfigFileService
         // hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
         // hs.task.run("git status --short", result => console.log(result.output));
         // console.log(hs.application.runningApplications());
+        // console.log(hs.mouse.getCurrentScreen());
+        // console.log("Mouse on primary monitor?", hs.mouse.isOnPrimaryScreen());
         // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
         // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
         // hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));

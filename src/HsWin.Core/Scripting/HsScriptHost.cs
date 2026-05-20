@@ -15,6 +15,7 @@ public sealed class HsScriptHost
         Applications = new ApplicationScriptApi(services.Applications, services.Shell, services.Logger);
         Media = new MediaScriptApi(services.Media, services.Logger);
         Audio = new AudioScriptApi(services.AudioDevices, services.Logger);
+        Mouse = new MouseScriptApi(services.Mouse, services.Logger);
         Hotkeys = new HotkeyScriptApi(services.Hotkeys, callbacks, trackResource);
         Tasks = new TaskScriptApi(
             services.Shell,
@@ -44,6 +45,8 @@ public sealed class HsScriptHost
     public MediaScriptApi Media { get; }
 
     public AudioScriptApi Audio { get; }
+
+    public MouseScriptApi Mouse { get; }
 
     public HotkeyScriptApi Hotkeys { get; }
 
