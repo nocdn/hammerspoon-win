@@ -8,14 +8,16 @@ public static class AlertRequestParser
     {
         var message = ScriptArgumentReader.RequireText(text, "text");
         var kind = AlertRequest.DefaultKind;
+        var icon = AlertRequest.DefaultIcon;
         int? duration = null;
 
         if (!ScriptArgumentReader.IsMissing(optionsOrKind))
         {
-            if (TryReadOptions(optionsOrKind, out var optionsKind, out var optionsDurationMs))
+            if (TryReadOptions(optionsOrKind, out var optionsKind, out var optionsDurationMs, out var optionsIcon))
             {
                 kind = optionsKind ?? kind;
                 duration = optionsDurationMs;
+                icon = optionsIcon ?? icon;
             }
             else
             {
@@ -28,13 +30,14 @@ public static class AlertRequestParser
             duration = ConvertToDurationMs(durationMs, "durationMs");
         }
 
-        return AlertRequest.Create(message, kind, duration);
+        return AlertRequest.Create(message, kind, duration, icon);
     }
 
-    private static bool TryReadOptions(object? value, out AlertKind? kind, out int? durationMs)
+    private static bool TryReadOptions(object? value, out AlertKind? kind, out int? durationMs, out AlertIcon? icon)
     {
         kind = null;
         durationMs = null;
+        icon = null;
         if (!ScriptArgumentReader.IsOptionsObject(value))
         {
             return false;
@@ -42,6 +45,9 @@ public static class AlertRequestParser
 
         kind = ReadKind(ScriptArgumentReader.GetPropertyValue(value, "type", "kind", "state", "status"));
         durationMs = ReadDuration(ScriptArgumentReader.GetPropertyValue(value, "durationMs", "duration"));
+        icon = ReadIcon(
+            ScriptArgumentReader.GetPropertyValue(value, "icon", "indicator"),
+            ScriptArgumentReader.GetPropertyValue(value, "loading", "loader", "spinner"));
         return true;
     }
 
@@ -53,6 +59,23 @@ public static class AlertRequestParser
     private static int? ReadDuration(object? value)
     {
         return ScriptArgumentReader.IsMissing(value) ? null : ConvertToDurationMs(value, "durationMs");
+    }
+
+    private static AlertIcon? ReadIcon(object? iconValue, object? loadingValue)
+    {
+        if (!ScriptArgumentReader.IsMissing(iconValue))
+        {
+            return AlertRequest.ParseIcon(ScriptArgumentReader.RequireText(iconValue, "icon"));
+        }
+
+        if (ScriptArgumentReader.IsMissing(loadingValue))
+        {
+            return null;
+        }
+
+        return ScriptArgumentReader.RequireBoolean(loadingValue, "loading")
+            ? AlertIcon.Loader
+            : AlertIcon.Auto;
     }
 
     private static int ConvertToDurationMs(object? value, string argumentName)

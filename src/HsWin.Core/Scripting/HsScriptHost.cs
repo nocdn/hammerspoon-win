@@ -16,6 +16,12 @@ public sealed class HsScriptHost
         Media = new MediaScriptApi(services.Media, services.Logger);
         Audio = new AudioScriptApi(services.AudioDevices, services.Logger);
         Hotkeys = new HotkeyScriptApi(services.Hotkeys, callbacks, trackResource);
+        Tasks = new TaskScriptApi(
+            services.Shell,
+            services.Logger,
+            services.CallbackScheduler,
+            callbacks,
+            trackResource);
         Keyboard = new KeyboardScriptApi(
             services.KeyboardEvents,
             services.KeyboardInput,
@@ -40,6 +46,8 @@ public sealed class HsScriptHost
     public AudioScriptApi Audio { get; }
 
     public HotkeyScriptApi Hotkeys { get; }
+
+    public TaskScriptApi Tasks { get; }
 
     public KeyboardScriptApi Keyboard { get; }
 

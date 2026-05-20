@@ -139,6 +139,8 @@ public sealed class ConfigFileService
         // Other examples:
         // console.log("Any values you want to inspect", { hello: "world" });
         // hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
+        // hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
+        // hs.task.run("git status --short", result => console.log(result.output));
         // console.log(hs.application.runningApplications());
         // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
         // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));

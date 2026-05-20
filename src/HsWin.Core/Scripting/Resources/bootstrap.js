@@ -132,6 +132,21 @@
       }
     }),
 
+    task: Object.freeze({
+      run(command, options, callback) {
+        if (typeof options === "function") {
+          callback = options;
+          options = undefined;
+        }
+
+        if (typeof callback !== "function") {
+          throw new Error("Task callback must be a function.");
+        }
+
+        return host.Tasks.Run(command, options, (resultJson) => callback(parseJson(resultJson)));
+      }
+    }),
+
     application: Object.freeze({
       isRunning(processName) {
         return host.Applications.IsRunning(processName);

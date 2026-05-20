@@ -29,6 +29,8 @@ public sealed record ScriptRuntimeServices
 
     public IScriptTimerService Timers { get; init; } = NullScriptTimerService.Instance;
 
+    public IScriptCallbackScheduler CallbackScheduler { get; init; } = InlineScriptCallbackScheduler.Instance;
+
     public IClipboardService Clipboard { get; init; } = NullClipboardService.Instance;
 
     public IShellService Shell { get; init; } = NullShellService.Instance;

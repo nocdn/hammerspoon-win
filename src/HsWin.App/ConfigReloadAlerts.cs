@@ -15,7 +15,7 @@ internal static class ConfigReloadAlerts
 
     public static AlertRequest CreateReloadingAlert()
     {
-        return AlertRequest.Create("Reloading config…", AlertKind.Normal, ReloadingDurationMs);
+        return AlertRequest.Create("Reloading config…", AlertKind.Normal, ReloadingDurationMs, AlertIcon.Loader);
     }
 
     public static AlertRequest CreateReloadedAlert()

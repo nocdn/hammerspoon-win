@@ -2,7 +2,7 @@
 
 Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HsWin\config.js`, and exposes a frozen `hs` global plus `console` logging.
 
-Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, and rotates the config console log file.
+Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast with a spinning loader appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, and rotates the config console log file.
 
 Startup is single-instance. Before the tray app creates hotkeys, keyboard hooks, timers, or the JavaScript runtime, the new process stops any older `Hammerspoon (Windows Edition)` or `HsWin.App` processes in the current Windows session and takes a named instance guard. This prevents stale instances from keeping global hotkeys registered after an upgrade or test launch.
 
@@ -28,11 +28,15 @@ hs.alert.show("Config loaded");
 hs.alert.show("Saved", "success", 2000);
 hs.alert.show("Something failed", { type: "error", durationMs: 4000 });
 hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
+hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
+hs.alert.show("Still working", { type: "normal", icon: "loader", durationMs: 60000 });
 ```
 
 Defaults when omitted: `type` is `success`, `durationMs` is `2000`.
 
 Object options accept `type`/`kind`/`state`/`status` and `durationMs`/`duration`. Types are `normal`, `success`, and `error`; aliases include `none`, `plain`, `info`, `ok`, `done`, `fail`, `failure`, and `failed`.
+
+Object options also accept `icon`/`indicator` and `loading`/`loader`/`spinner`. Icons are `auto`, `none`, `dot`, and `loader`; aliases include `default`, `status`, `loading`, `spinner`, `progress`, and `busy`. `loading: true` is a shortcut for `icon: "loader"`, while `loading: false` returns to automatic icon behavior. Automatic icons show no icon for `normal` toasts and a green/red dot for `success`/`error` toasts.
 
 The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window.
 
@@ -60,7 +64,7 @@ hs.clipboard.setContents(`${previous}\nUpdated by HsWin`);
 
 ### `hs.execute(command, options?)`
 
-Runs a command through `cmd.exe /S /C` and returns a result object.
+Runs a command through `cmd.exe /S /C` and returns a result object. This call is synchronous; use `hs.task.run` when you want a loader toast or other UI to keep updating while the command runs.
 
 ```js
 const result = hs.execute("git status --short", {
@@ -76,6 +80,31 @@ if (result.success) {
 ```
 
 Options are `cwd`/`workingDirectory`/`directory` and `timeoutMs`/`timeout`; the default timeout is 30000 ms. The result has `command`, `success`, `status` (same as `success`), `exitCode`, `output`, `error`, and `timedOut`.
+
+### `hs.task.run(command, options?, callback)`
+
+Runs a command through `cmd.exe /S /C` on a background thread and calls `callback(result)` when it finishes. The returned handle supports `stop()`, `dispose()`, and `delete()`; stopping it suppresses the callback, and config reload stops outstanding task handles automatically.
+
+```js
+hs.alert.show("Working…", {
+  type: "normal",
+  loading: true,
+  durationMs: 60000
+});
+
+const task = hs.task.run("git status --short", {
+  cwd: "C:\\Users\\me\\project",
+  timeoutMs: 30000
+}, result => {
+  if (result.success) {
+    hs.alert.show("Done", { type: "success", durationMs: 2500 });
+  } else {
+    hs.alert.show(result.error || "Command failed", { type: "error", durationMs: 6000 });
+  }
+});
+```
+
+If you do not need the handle, you can omit `const task =`. Options and result fields are the same as `hs.execute`.
 
 ### `hs.hotkey.bind(modifiers, key, callback)`
 
@@ -394,6 +423,8 @@ hs.hotkey.bind([], "pageup", () => {
 // Other examples:
 // console.log("Any values you want to inspect", { hello: "world" });
 // hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
+// hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
+// hs.task.run("git status --short", result => console.log(result.output));
 // console.log(hs.application.runningApplications());
 // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
 // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));

@@ -11,6 +11,8 @@ public sealed class AlertRequestParserTests
 
         Assert.Equal("Loaded", request.Text);
         Assert.Equal(AlertKind.Success, request.Kind);
+        Assert.Equal(AlertIcon.Auto, request.Icon);
+        Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
         Assert.Equal(2000, request.DurationMs);
     }
 
@@ -41,7 +43,55 @@ public sealed class AlertRequestParserTests
             });
 
         Assert.Equal(AlertKind.Normal, request.Kind);
+        Assert.Equal(AlertIcon.None, request.EffectiveIcon);
         Assert.Equal(1500, request.DurationMs);
+    }
+
+    [Fact]
+    public void FromScriptArgumentsReadsLoaderIconOption()
+    {
+        var request = AlertRequestParser.FromScriptArguments(
+            "Working",
+            new Dictionary<string, object?>
+            {
+                ["type"] = "normal",
+                ["icon"] = "loader",
+                ["durationMs"] = 60000
+            });
+
+        Assert.Equal(AlertKind.Normal, request.Kind);
+        Assert.Equal(AlertIcon.Loader, request.Icon);
+        Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+        Assert.Equal(60000, request.DurationMs);
+    }
+
+    [Fact]
+    public void FromScriptArgumentsTreatsLoadingTrueAsLoaderIcon()
+    {
+        var request = AlertRequestParser.FromScriptArguments(
+            "Working",
+            new Dictionary<string, object?>
+            {
+                ["type"] = "normal",
+                ["loading"] = true
+            });
+
+        Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+    }
+
+    [Fact]
+    public void FromScriptArgumentsTreatsLoadingFalseAsAutomaticIcon()
+    {
+        var request = AlertRequestParser.FromScriptArguments(
+            "Done",
+            new Dictionary<string, object?>
+            {
+                ["type"] = "success",
+                ["loading"] = false
+            });
+
+        Assert.Equal(AlertIcon.Auto, request.Icon);
+        Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
     }
 
     [Fact]
@@ -67,6 +117,20 @@ public sealed class AlertRequestParserTests
             AlertRequestParser.FromScriptArguments("Saved", "warning"));
 
         Assert.Contains("Unknown alert type", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromScriptArgumentsRejectsUnknownIcon()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            AlertRequestParser.FromScriptArguments(
+                "Saved",
+                new Dictionary<string, object?>
+                {
+                    ["icon"] = "warning"
+                }));
+
+        Assert.Contains("Unknown alert icon", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

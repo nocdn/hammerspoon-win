@@ -2,6 +2,7 @@ using HsWin.Core.Alerts;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using MediaBrush = System.Windows.Media.Brush;
@@ -51,13 +52,18 @@ internal sealed class ToastWindow : Window, IToastView
     private static readonly MediaBrush SuccessBrush = CreateFrozenBrush(WpfColor.FromRgb(22, 163, 74));
     private static readonly WpfFontFamily TextFontFamily = new("Segoe UI");
     private static readonly DropShadowEffect PillShadow = CreatePillShadow();
+    private static readonly Geometry LoaderGeometry = CreateLoaderGeometry();
 
     private readonly BlurEffect _exitBlur;
     private readonly UIElement _exitTarget;
     private readonly ToastExitAnimator _exitAnimator;
     private readonly PillBorder _border;
+    private readonly Grid _iconSlot;
     private readonly Ellipse _dot;
+    private readonly Viewbox _loader;
+    private readonly RotateTransform _loaderRotation;
     private readonly TextBlock _text;
+    private bool _loaderSpinning;
 
     public ToastWindow()
     {
@@ -73,7 +79,10 @@ internal sealed class ToastWindow : Window, IToastView
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
 
-        _dot = CreateDotSlot();
+        _dot = CreateDot();
+        _loaderRotation = new RotateTransform();
+        _loader = CreateLoaderIcon(_loaderRotation);
+        _iconSlot = CreateIconSlot(_dot, _loader);
         _text = CreateText();
 
         var panel = new StackPanel
@@ -81,7 +90,7 @@ internal sealed class ToastWindow : Window, IToastView
             Orientation = WpfOrientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center
         };
-        panel.Children.Add(_dot);
+        panel.Children.Add(_iconSlot);
         panel.Children.Add(_text);
 
         _border = new PillBorder
@@ -114,10 +123,12 @@ internal sealed class ToastWindow : Window, IToastView
     public void UpdateRequest(AlertRequest request)
     {
         _text.Text = request.Text;
+        var icon = request.EffectiveIcon;
 
-        if (request.Kind is AlertKind.Normal)
+        if (icon is AlertIcon.None)
         {
-            _dot.Visibility = Visibility.Collapsed;
+            StopLoaderSpin();
+            _iconSlot.Visibility = Visibility.Collapsed;
             _border.Padding = new Thickness(
                 ToastStyleMetrics.NormalHorizontalPadding,
                 ToastStyleMetrics.VerticalPadding,
@@ -126,23 +137,107 @@ internal sealed class ToastWindow : Window, IToastView
             return;
         }
 
-        _dot.Visibility = Visibility.Visible;
-        _dot.Fill = request.Kind is AlertKind.Error ? ErrorBrush : SuccessBrush;
+        _iconSlot.Visibility = Visibility.Visible;
+        _dot.Visibility = icon is AlertIcon.Dot ? Visibility.Visible : Visibility.Collapsed;
+        _loader.Visibility = icon is AlertIcon.Loader ? Visibility.Visible : Visibility.Collapsed;
+
+        if (icon is AlertIcon.Loader)
+        {
+            StartLoaderSpin();
+        }
+        else
+        {
+            StopLoaderSpin();
+            _dot.Fill = request.Kind is AlertKind.Error ? ErrorBrush : SuccessBrush;
+        }
+
         _border.Padding = new Thickness(
-            ToastStyleMetrics.DotStateLeftPadding,
+            ToastStyleMetrics.IconStateLeftPadding,
             ToastStyleMetrics.VerticalPadding,
             ToastStyleMetrics.DotStateRightPadding,
             ToastStyleMetrics.VerticalPadding);
     }
 
-    private static Ellipse CreateDotSlot()
+    private void StartLoaderSpin()
+    {
+        if (_loaderSpinning)
+        {
+            return;
+        }
+
+        _loaderSpinning = true;
+        var animation = new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(ToastStyleMetrics.LoaderSpinDurationMs))
+        {
+            RepeatBehavior = RepeatBehavior.Forever
+        };
+        _loaderRotation.BeginAnimation(RotateTransform.AngleProperty, animation);
+    }
+
+    private void StopLoaderSpin()
+    {
+        if (!_loaderSpinning)
+        {
+            return;
+        }
+
+        _loaderRotation.BeginAnimation(RotateTransform.AngleProperty, null);
+        _loaderRotation.Angle = 0;
+        _loaderSpinning = false;
+    }
+
+    private static Grid CreateIconSlot(Ellipse dot, Viewbox loader)
+    {
+        return new()
+        {
+            Width = ToastStyleMetrics.IconSlotSize,
+            Height = ToastStyleMetrics.IconSlotSize,
+            Margin = new Thickness(0, 0, ToastStyleMetrics.IconTextGap, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Children = { dot, loader }
+        };
+    }
+
+    private static Ellipse CreateDot()
     {
         return new()
         {
             Width = ToastStyleMetrics.DotSize,
             Height = ToastStyleMetrics.DotSize,
-            Margin = new Thickness(0, 0, ToastStyleMetrics.DotTextGap, 0),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+    }
+
+    private static Viewbox CreateLoaderIcon(RotateTransform rotation)
+    {
+        var path = new Path
+        {
+            Data = LoaderGeometry,
+            Stroke = TextBrush,
+            StrokeThickness = 2,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Fill = null
+        };
+
+        var canvas = new Canvas
+        {
+            Width = 24,
+            Height = 24,
+            Children = { path }
+        };
+
+        return new()
+        {
+            Width = ToastStyleMetrics.LoaderIconSize,
+            Height = ToastStyleMetrics.LoaderIconSize,
+            Child = canvas,
+            RenderTransform = rotation,
+            RenderTransformOrigin = new System.Windows.Point(0.5, 0.5),
+            Stretch = Stretch.Uniform,
             Visibility = Visibility.Collapsed
         };
     }
@@ -166,6 +261,21 @@ internal sealed class ToastWindow : Window, IToastView
         var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
+    }
+
+    private static Geometry CreateLoaderGeometry()
+    {
+        var geometry = Geometry.Parse(
+            "M 12 2 L 12 6 " +
+            "M 16.2 7.8 L 19.1 4.9 " +
+            "M 18 12 L 22 12 " +
+            "M 16.2 16.2 L 19.1 19.1 " +
+            "M 12 18 L 12 22 " +
+            "M 4.9 19.1 L 7.8 16.2 " +
+            "M 2 12 L 6 12 " +
+            "M 4.9 4.9 L 7.8 7.8");
+        geometry.Freeze();
+        return geometry;
     }
 
     private static DropShadowEffect CreatePillShadow()

@@ -12,6 +12,7 @@ public sealed class ConfigReloadAlertsTests
 
         Assert.Equal("Reloading config…", request.Text);
         Assert.Equal(AlertKind.Normal, request.Kind);
+        Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
         Assert.Equal(ConfigReloadAlerts.ReloadingDurationMs, request.DurationMs);
         Assert.Equal(250, ConfigReloadAlerts.MinimumReloadingVisibleMs);
     }
@@ -23,6 +24,7 @@ public sealed class ConfigReloadAlertsTests
 
         Assert.Equal("Config reloaded", request.Text);
         Assert.Equal(AlertKind.Success, request.Kind);
+        Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
         Assert.Equal(ConfigReloadAlerts.ReloadedDurationMs, request.DurationMs);
     }
 
@@ -35,6 +37,7 @@ public sealed class ConfigReloadAlertsTests
         Assert.Contains("Hotkey already in use", request.Text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("config.js", request.Text, StringComparison.Ordinal);
         Assert.Equal(AlertKind.Error, request.Kind);
+        Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
         Assert.Equal(ConfigReloadAlerts.ReloadFailedDurationMs, request.DurationMs);
     }
 }

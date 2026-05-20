@@ -44,6 +44,21 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadSupportsAlertLoaderOption()
+    {
+        var presenter = new CapturingAlertPresenter();
+        using var runtime = new ScriptRuntime(presenter);
+
+        runtime.Reload("""hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });""");
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("Working", request.Text);
+        Assert.Equal(AlertKind.Normal, request.Kind);
+        Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+        Assert.Equal(60000, request.DurationMs);
+    }
+
+    [Fact]
     public void ReloadSupportsAlertKindAndDurationArguments()
     {
         var presenter = new CapturingAlertPresenter();
@@ -323,6 +338,80 @@ public sealed class ScriptRuntimeTests
         Assert.Equal(1234, execution.Options.TimeoutMs);
         var request = Assert.Single(presenter.Requests);
         Assert.Equal("true:true:0:hello", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesTaskRunForBackgroundCommands()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var shell = new CapturingShellService
+        {
+            ExecuteResult = new ShellExecutionResult("echo hello", true, 0, "hello\r\n", string.Empty, TimedOut: false)
+        };
+        var callbacks = new QueuedScriptCallbackScheduler();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Shell = shell,
+            CallbackScheduler = callbacks
+        });
+
+        runtime.Reload("""
+            hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
+            hs.task.run("echo hello", { cwd: "C:\\Temp", timeoutMs: 1234 }, result => {
+              hs.alert.show(`${result.success}:${result.exitCode}:${result.output.trim()}`, { type: "success", durationMs: 2500 });
+            });
+            """);
+
+        var startAlert = Assert.Single(presenter.Requests);
+        Assert.Equal("Working", startAlert.Text);
+        Assert.Equal(AlertIcon.Loader, startAlert.EffectiveIcon);
+
+        Assert.True(callbacks.WaitForCallback(TimeSpan.FromSeconds(5)));
+        callbacks.RunNext();
+
+        var execution = Assert.Single(shell.Executions);
+        Assert.Equal("echo hello", execution.Command);
+        Assert.Equal(@"C:\Temp", execution.Options.WorkingDirectory);
+        Assert.Equal(1234, execution.Options.TimeoutMs);
+        Assert.Collection(
+            presenter.Requests,
+            request => Assert.Equal("Working", request.Text),
+            request =>
+            {
+                Assert.Equal("true:0:hello", request.Text);
+                Assert.Equal(AlertKind.Success, request.Kind);
+                Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
+            });
+    }
+
+    [Fact]
+    public void ReloadDisposesOutstandingTaskRunCallbacks()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var shell = new CapturingShellService
+        {
+            ExecuteResult = new ShellExecutionResult("echo old", true, 0, "old\r\n", string.Empty, TimedOut: false)
+        };
+        var callbacks = new QueuedScriptCallbackScheduler();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Shell = shell,
+            CallbackScheduler = callbacks
+        });
+
+        runtime.Reload("""
+            hs.task.run("echo old", result => {
+              hs.alert.show("Old callback should not run");
+            });
+            """);
+
+        Assert.True(callbacks.WaitForCallback(TimeSpan.FromSeconds(5)));
+        runtime.Reload("""console.log("new config");""");
+        callbacks.RunNext();
+
+        Assert.Empty(presenter.Requests);
     }
 
     [Fact]
@@ -721,6 +810,42 @@ public sealed class ScriptRuntimeTests
     private sealed record CapturingExecution(string Command, ShellExecutionOptions Options);
 
     private sealed record CapturingLaunch(string Target, LaunchOptions Options);
+
+    private sealed class QueuedScriptCallbackScheduler : IScriptCallbackScheduler
+    {
+        private readonly Queue<Action> _callbacks = [];
+        private readonly object _gate = new();
+        private readonly ManualResetEventSlim _hasCallback = new();
+
+        public void Schedule(Action callback)
+        {
+            lock (_gate)
+            {
+                _callbacks.Enqueue(callback);
+                _hasCallback.Set();
+            }
+        }
+
+        public bool WaitForCallback(TimeSpan timeout)
+        {
+            return _hasCallback.Wait(timeout);
+        }
+
+        public void RunNext()
+        {
+            Action callback;
+            lock (_gate)
+            {
+                callback = _callbacks.Dequeue();
+                if (_callbacks.Count == 0)
+                {
+                    _hasCallback.Reset();
+                }
+            }
+
+            callback();
+        }
+    }
 
     private sealed class CapturingAudioDeviceController : IAudioDeviceController
     {

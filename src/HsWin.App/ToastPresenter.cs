@@ -76,12 +76,12 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         }
 
         var queuedAt = Stopwatch.GetTimestamp();
-        _logger.Info($"Toast show queued text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' durationMs={request.DurationMs}.");
+        _logger.Info($"Toast show queued text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' durationMs={request.DurationMs}.");
         _dispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
-                _logger.Info($"Toast show dequeued text='{FormatTextForLog(request.Text)}' dispatchDelayMs={Stopwatch.GetElapsedTime(queuedAt).TotalMilliseconds:F3}.");
+                _logger.Info($"Toast show dequeued text='{FormatTextForLog(request.Text)}' icon='{request.EffectiveIcon}' dispatchDelayMs={Stopwatch.GetElapsedTime(queuedAt).TotalMilliseconds:F3}.");
                 ShowOnDispatcher(request);
             }
         }, DispatcherPriority.Send);
@@ -155,7 +155,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         StartTimer(request.DurationMs);
 
         _logger.Info(
-            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' alreadyVisible={wasVisible} wasOnScreen={wasOnScreen} " +
+            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' alreadyVisible={wasVisible} wasOnScreen={wasOnScreen} " +
             $"moveMs={ElapsedMs(startedAt, movedAt):F3} updateMs={ElapsedMs(movedAt, updatedAt):F3} " +
             $"showMs={ElapsedMs(updatedAt, shownAt):F3} layoutMs={ElapsedMs(shownAt, layoutAt):F3} " +
             $"positionMs={ElapsedMs(layoutAt, positionedAt):F3} totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");

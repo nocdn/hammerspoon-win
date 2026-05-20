@@ -9,6 +9,7 @@ using HsWin.App.Hotkeys;
 using HsWin.App.Input;
 using HsWin.App.Keyboard;
 using HsWin.App.Media;
+using HsWin.App.Scripting;
 using HsWin.App.Shell;
 using HsWin.App.Timers;
 using System.Diagnostics;
@@ -66,6 +67,7 @@ internal sealed class AppController : IDisposable
             KeyboardEvents = _keyboardEventService,
             KeyboardInput = _keyboardInputService,
             Timers = _timerService,
+            CallbackScheduler = new DispatcherScriptCallbackScheduler(WpfApplication.Current.Dispatcher),
             Clipboard = _clipboardService,
             Shell = _shellService,
             AudioDevices = _audioDeviceController,
