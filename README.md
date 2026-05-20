@@ -4,6 +4,8 @@ Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired b
 
 Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, and rotates the config console log file.
 
+Startup is single-instance. Before the tray app creates hotkeys, keyboard hooks, timers, or the JavaScript runtime, the new process stops any older `Hammerspoon (Windows Edition)` or `HsWin.App` processes in the current Windows session and takes a named instance guard. This prevents stale instances from keeping global hotkeys registered after an upgrade or test launch.
+
 ## Current API
 
 ### `hs.alert.show(text, optionsOrKind?, durationMs?)`
@@ -373,6 +375,8 @@ hs.hotkey.bind([], "`", () => {
 The runtime diagnostics log rotates on every app launch. The JavaScript console log rotates on every config reload.
 
 Recent builds also write timing lines to the runtime log for hotkey dispatch, toast show/layout/position, and media commands (`Toast show timing`, `Media session timing`, `elapsedMs=...`). Use these when tuning perceived latency.
+
+Startup cleanup writes `Previous instance cleanup completed`, `Stopping previous HsWin instance`, and `Single instance guard acquired` lines to the runtime log when it scans for or terminates older instances.
 
 ## Development
 

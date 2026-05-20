@@ -1,0 +1,79 @@
+namespace HsWin.App.Tests;
+
+public sealed class PreviousInstanceProcessMatcherTests
+{
+    [Fact]
+    public void ShouldTerminateSkipsCurrentProcess()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldTerminate(
+            candidateProcessId: 42,
+            currentProcessId: 42,
+            candidateProcessName: AppBranding.DisplayName,
+            candidateSessionId: 1,
+            currentSessionId: 1,
+            candidateExecutablePath: null,
+            currentExecutablePath: null);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShouldTerminateMatchesInstalledAppProcessNameInCurrentSession()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldTerminate(
+            candidateProcessId: 41,
+            currentProcessId: 42,
+            candidateProcessName: AppBranding.DisplayName,
+            candidateSessionId: 1,
+            currentSessionId: 1,
+            candidateExecutablePath: null,
+            currentExecutablePath: null);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldTerminateMatchesDevelopmentAppProcessNameInCurrentSession()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldTerminate(
+            candidateProcessId: 41,
+            currentProcessId: 42,
+            candidateProcessName: "HsWin.App",
+            candidateSessionId: 1,
+            currentSessionId: 1,
+            candidateExecutablePath: null,
+            currentExecutablePath: null);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldTerminateSkipsKnownProcessNameInAnotherSession()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldTerminate(
+            candidateProcessId: 41,
+            currentProcessId: 42,
+            candidateProcessName: AppBranding.DisplayName,
+            candidateSessionId: 2,
+            currentSessionId: 1,
+            candidateExecutablePath: null,
+            currentExecutablePath: null);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShouldTerminateMatchesSameExecutablePath()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldTerminate(
+            candidateProcessId: 41,
+            currentProcessId: 42,
+            candidateProcessName: "renamed",
+            candidateSessionId: 1,
+            currentSessionId: 1,
+            candidateExecutablePath: @"C:\Program Files\HsWin\Hammerspoon (Windows Edition).exe",
+            currentExecutablePath: @"C:\Program Files\HsWin\Hammerspoon (Windows Edition).exe");
+
+        Assert.True(result);
+    }
+}

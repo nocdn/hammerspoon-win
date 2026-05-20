@@ -22,6 +22,7 @@ internal sealed class AppController : IDisposable
 {
     private readonly ConfigFileService _configFileService;
     private readonly FileLogger _logger;
+    private readonly SingleInstanceGuard _singleInstanceGuard;
     private readonly ReloadScriptConsoleLogger _scriptConsoleLogger;
     private readonly ToastPresenter _toastPresenter;
     private readonly NativeHotkeyService _hotkeyService;
@@ -45,6 +46,7 @@ internal sealed class AppController : IDisposable
         var paths = HsWinPaths.FromAppData();
         _configFileService = new ConfigFileService(paths.ConfigFilePath);
         _logger = FileLogger.CreateForLaunch(paths.RuntimeLogDirectory);
+        _singleInstanceGuard = SingleInstanceGuard.Acquire(_logger);
         _scriptConsoleLogger = new ReloadScriptConsoleLogger(paths.ConfigLogDirectory);
         _toastPresenter = new ToastPresenter(_logger);
         _hotkeyService = new NativeHotkeyService(_logger);
@@ -205,6 +207,8 @@ internal sealed class AppController : IDisposable
         _logger.Info("Keyboard event service disposed.");
         _toastPresenter.Dispose();
         _logger.Info("Toast presenter disposed.");
+        _singleInstanceGuard.Dispose();
+        _logger.Info("Single instance guard disposed.");
         _disposed = true;
     }
 
