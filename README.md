@@ -6,7 +6,18 @@ Reload the config from the tray menu at any time. Reload work runs off the UI th
 
 Startup is single-instance. Before the tray app creates hotkeys, keyboard hooks, timers, or the JavaScript runtime, the new process stops any older `Hammerspoon (Windows Edition)` or `HsWin.App` processes in the current Windows session and takes a named instance guard. This prevents stale instances from keeping global hotkeys registered after an upgrade or test launch.
 
+## Tray menu
+
+Right-click the notification area icon:
+
+- **Open Config** — opens `%APPDATA%\HsWin\config.js` in your default editor (creates the default file first if missing).
+- **Reload Config** — reloads `config.js` on a background thread (shows reload toasts; same engine reset as startup reload).
+- **Start at Login** — toggles whether HsWin starts when you sign in to Windows.
+- **Quit** — exits the app.
+
 ## Current API
+
+The `hs` global and `console` are frozen. Reloading config rebuilds the JavaScript engine and disposes hotkeys, keyboard watchers, timers, and native keyboard repeats from the previous load.
 
 ### `hs.alert.show(text, optionsOrKind?, durationMs?)`
 
@@ -19,7 +30,9 @@ hs.alert.show("Something failed", { type: "error", durationMs: 4000 });
 hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
 ```
 
-Defaults when omitted: `type` is `success`, `durationMs` is `2000`. Types are `normal`, `success`, and `error`; aliases include `ok`, `done`, `plain`, `info`, `failure`, and `failed`.
+Defaults when omitted: `type` is `success`, `durationMs` is `2000`.
+
+Object options accept `type`/`kind`/`state`/`status` and `durationMs`/`duration`. Types are `normal`, `success`, and `error`; aliases include `none`, `plain`, `info`, `ok`, `done`, `fail`, `failure`, and `failed`.
 
 The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window.
 
@@ -62,7 +75,7 @@ if (result.success) {
 }
 ```
 
-Options are `cwd`/`workingDirectory` and `timeoutMs`/`timeout`; the default timeout is 30000 ms. The result has `command`, `success`, `status`, `exitCode`, `output`, `error`, and `timedOut`.
+Options are `cwd`/`workingDirectory`/`directory` and `timeoutMs`/`timeout`; the default timeout is 30000 ms. The result has `command`, `success`, `status` (same as `success`), `exitCode`, `output`, `error`, and `timedOut`.
 
 ### `hs.hotkey.bind(modifiers, key, callback)`
 
@@ -76,9 +89,11 @@ hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mous
 
 Supported modifiers are `alt`, `option`, `opt`, `ctrl`, `control`, `shift`, `cmd`, `command`, `win`, `windows`, and `meta`.
 
-`key` is a letter (`A`-`Z`), digit (`0`-`9`), function key (`F1`-`F24`), a named key, or a mouse button. Named keyboard keys include `backspace`, `delete`, `tab`, `enter`, `escape`, `space`, `pageup`, `pagedown`, `home`, `end`, arrows, `insert`, punctuation names, and punctuation literals. Mouse button keys include `mouse.middle`, `mouse.back`, and `mouse.forward` plus common aliases.
+`key` is a letter (`A`-`Z`), digit (`0`-`9`), function key (`F1`-`F24`), a named key, or a mouse button. Named keyboard keys include `backspace`, `delete`/`del`, `tab`, `enter`/`return`, `escape`/`esc`, `space`, `pageup`, `pagedown`, `home`, `end`, arrows, `insert`/`ins`, punctuation names (`semicolon`, `comma`, `period`, `slash`, and others), and punctuation literals such as `` ` ``, `-`, `=`, `[`, `]`. Mouse button keys include `mouse.middle`, `mouse.back`, `mouse.forward`, `middle`, `back`, `forward`, `thumb1`, `thumb2`, `xbutton1`, `xbutton2`, `button3`–`button5`, and related `mouse.*` forms.
 
-If a hotkey callback throws, the runtime shows an error toast instead of crashing the host.
+`bind` returns a registration handle; config reload disposes it automatically. You rarely need to keep the return value.
+
+If a hotkey, keyboard-watch, or timer callback throws, the runtime shows an error toast instead of crashing the host.
 
 ### `hs.application.isRunning(processName)`
 
@@ -134,7 +149,7 @@ if (!hs.application.isRunning("notepad.exe")) {
 hs.application.launch("https://www.hammerspoon.org/");
 ```
 
-Options are `cwd`/`workingDirectory` and `arguments`/`args`. The result has `target`, `success`, `processId`, and `error`; `processId` can be `null` for shell-handled targets such as URLs.
+Options are `cwd`/`workingDirectory`/`directory` and `arguments`/`args`. The result has `target`, `success`, `processId`, and `error`; `processId` can be `null` for shell-handled targets such as URLs.
 
 ### `hs.media.playPause()`, `hs.media.previousTrack()`, `hs.media.nextTrack()`
 
@@ -149,11 +164,11 @@ hs.media.previousTrack();
 hs.media.nextTrack();
 ```
 
-Each call returns `command`, `success`, `action`, `statusBefore`, `statusAfter`, and `backend`. `playPause` actions are `played`, `paused`, `toggled`, or `playPause`; track actions are `previousTrack` and `nextTrack`.
+Each call returns `command`, `success`, `action`, `statusBefore`, `statusAfter`, and `backend` (`mediaSession` when a Windows media session handled the command, otherwise `sendInput`). `playPause` actions are `played`, `paused`, `toggled`, or `playPause`; track actions use `previousTrack` and `nextTrack`. Playback status strings are typically `playing`, `paused`, `stopped`, or `unknown`.
 
 ### `hs.audiodevice`, `hs.sound`
 
-Reads and updates Windows output device volume and mute state. `hs.sound` is a simple default-output shortcut; `hs.audiodevice` can target a specific output device.
+Reads and updates Windows output device volume and mute state. `hs.sound` is a default-output shortcut with `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. `hs.audiodevice` can target a specific output device by id.
 
 ```js
 const output = hs.audiodevice.defaultOutputDevice();
@@ -170,7 +185,7 @@ hs.sound.setVolume(20);
 hs.sound.toggleMute();
 ```
 
-Device objects have `id`, `name`, `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)` use the default output device when `deviceId` is omitted. Volume is 0-100.
+Device objects have `id`, `name`, `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. The `set*` and `toggleMute()` methods return a volume snapshot (`id`, `name`, `volume`, `muted`). Module-level `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)` use the default output device when `deviceId` is omitted. Volume is 0–100.
 
 ### `hs.keyboard.watch(callback, options?)`
 
@@ -189,9 +204,11 @@ const watcher = hs.keyboard.watch(event => {
 watcher.stop();
 ```
 
+Returns a handle with `stop()`, `dispose()`, and `delete()` (any casing). Config reload stops active watchers automatically.
+
 The implementation uses `WH_KEYBOARD_LL` for global key events and blocking. Injected events are ignored by default to avoid feedback loops when scripts call `hs.keyboard.tap`.
 
-Event fields are `type`, `keyCode`, `key`, `modifiers`, `modifierFlags`, `isKeyDown`, `isKeyUp`, `isModifier`, `isInjected`, and `isExtended`.
+Event fields are `type` (`keydown` or `keyup`), `keyCode`, `key`, `modifiers` (`ctrl`, `alt`, `shift`, `win`), `modifierFlags`, `isKeyDown`, `isKeyUp`, `isModifier`, `isInjected`, and `isExtended`.
 
 Options:
 
@@ -201,7 +218,7 @@ Options:
 
 ### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
 
-Sends or queries keyboard input. `key` accepts the same keyboard key names as `hs.hotkey.bind`, or a numeric virtual-key code.
+Sends or queries keyboard input. `key` accepts the same keyboard key names as `hs.hotkey.bind`, or a numeric virtual-key code (0–255).
 
 ```js
 hs.keyboard.tap("w");
@@ -223,7 +240,9 @@ hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
 
 Aliases for `suppressPhysicalModifiers` are `suppressModifiers` and `withoutModifiers`.
 
-`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`. The host keeps only one active native repeat at a time, replaces any previous repeat when a new one starts, releases suppressed modifiers without re-pressing them on every tick, and auto-stops a repeat after 5 seconds as a runaway safety net.
+`repeat` options are `intervalMs`/`interval` (default `10`, allowed range `1`–`1000`) plus the same `suppressPhysicalModifiers` / `suppressModifiers` / `withoutModifiers` aliases as `tap`.
+
+`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`. The host keeps only one active native repeat at a time, replaces any previous repeat when a new one starts, releases suppressed modifiers without re-pressing them on every tick, and auto-stops a repeat after 5 seconds as a runaway safety net. Returned handles support `stop()`, `dispose()`, and `delete()` (any casing).
 
 ### `hs.timer.doAfter(delayMs, callback)`, `hs.timer.doEvery(intervalMs, callback)`
 
@@ -344,8 +363,9 @@ const apex = {
 apex.refresh();
 hs.timer.doEvery(1000, () => apex.refresh());
 
-hs.hotkey.bind(["ctrl", "alt"], "R", () => {
+hs.hotkey.bind(["ctrl", "alt", "shift"], "F12", () => {
   const isRunning = apex.refresh();
+
   hs.alert.show(
     isRunning ? "Apex is running" : "Apex is not running",
     { type: isRunning ? "success" : "error", durationMs: 2000 }
@@ -358,6 +378,26 @@ hs.hotkey.bind([], "`", () => {
     hs.media.playPause();
   }
 });
+
+hs.hotkey.bind([], "delete", () => {
+  if (apex.isRunning) {
+    hs.media.previousTrack();
+  }
+});
+
+hs.hotkey.bind([], "pageup", () => {
+  if (apex.isRunning) {
+    hs.media.nextTrack();
+  }
+});
+
+// Other examples:
+// console.log("Any values you want to inspect", { hello: "world" });
+// hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
+// console.log(hs.application.runningApplications());
+// hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
+// hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
+// hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));
 ```
 
 ## Projects
