@@ -8,7 +8,6 @@ using System.Windows.Shapes;
 using MediaBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfColor = System.Windows.Media.Color;
-using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace HsWin.App;
@@ -50,7 +49,6 @@ internal sealed class ToastWindow : Window, IToastView
     private static readonly MediaBrush TextBrush = WpfBrushes.Black;
     private static readonly MediaBrush ErrorBrush = CreateFrozenBrush(WpfColor.FromRgb(242, 20, 26));
     private static readonly MediaBrush SuccessBrush = CreateFrozenBrush(WpfColor.FromRgb(22, 163, 74));
-    private static readonly WpfFontFamily TextFontFamily = new("Segoe UI");
     private static readonly DropShadowEffect PillShadow = CreatePillShadow();
     private static readonly Geometry LoaderGeometry = CreateLoaderGeometry();
 
@@ -246,7 +244,7 @@ internal sealed class ToastWindow : Window, IToastView
     {
         return new()
         {
-            FontFamily = TextFontFamily,
+            FontFamily = ToastFonts.TextFontFamily,
             FontSize = ToastStyleMetrics.TextFontSize,
             FontWeight = ToastStyleMetrics.TextFontWeight,
             Foreground = TextBrush,

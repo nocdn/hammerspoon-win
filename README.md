@@ -38,7 +38,7 @@ Object options accept `type`/`kind`/`state`/`status` and `durationMs`/`duration`
 
 Object options also accept `icon`/`indicator` and `loading`/`loader`/`spinner`. Icons are `auto`, `none`, `dot`, and `loader`; aliases include `default`, `status`, `loading`, `spinner`, `progress`, and `busy`. `loading: true` is a shortcut for `icon: "loader"`, while `loading: false` returns to automatic icon behavior. Automatic icons show no icon for `normal` toasts and a green/red dot for `success`/`error` toasts.
 
-The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window.
+The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window. Toast text uses embedded **SF Pro Text** Regular (see `src/HsWin.App/Assets/Fonts/` and Apple's [SF Pro license](https://developer.apple.com/fonts/)).
 
 ### `console.log`, `console.info`, `console.warn`, `console.error`
 

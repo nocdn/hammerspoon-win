@@ -1,0 +1,4 @@
+SF Pro fonts in this folder are obtained from Apple:
+https://developer.apple.com/fonts/
+
+Use and redistribution are governed by Apple's SF Pro license terms on that page.
