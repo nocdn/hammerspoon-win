@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Windows.Threading;
 
 namespace HsWin.App.Hotkeys;
 
@@ -12,11 +13,14 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
     private const int MaximumApplicationHotkeyId = 0xBFFF;
     private const int FirstHotkeyId = 1;
     private const int WmHotkey = 0x0312;
+    private const int ErrorHotkeyAlreadyRegistered = 1409;
     private static readonly IntPtr HwndMessage = new(-3);
 
     private readonly MessageWindow _window;
     private readonly IRuntimeLogger _logger;
     private readonly NativeMouseHotkeyHook _mouseHotkeys;
+    private readonly IHotkeyThreadInvoker _threadInvoker;
+    private readonly IHotkeyPlatform _platform;
     private readonly Dictionary<int, Action> _callbacks = [];
     private int _nextId = FirstHotkeyId;
     private bool _disposed;
@@ -27,14 +31,45 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
     }
 
     public NativeHotkeyService(IRuntimeLogger logger)
+        : this(logger, new DispatcherHotkeyThreadInvoker(Dispatcher.CurrentDispatcher), NativeHotkeyPlatform.Instance)
+    {
+    }
+
+    internal NativeHotkeyService(
+        IRuntimeLogger logger,
+        IHotkeyThreadInvoker threadInvoker,
+        IHotkeyPlatform platform)
     {
         _logger = logger;
+        _threadInvoker = threadInvoker;
+        _platform = platform;
         _mouseHotkeys = new NativeMouseHotkeyHook(_logger);
         _window = new MessageWindow(DispatchHotkey);
         _logger.Info($"Hotkey message window created. HWND=0x{_window.Handle.ToInt64():X}");
     }
 
     public IDisposable Register(HotkeyDefinition hotkey, Action pressed)
+    {
+        if (!_threadInvoker.CheckAccess())
+        {
+            return _threadInvoker.Invoke(() => RegisterOnOwnerThread(hotkey, pressed));
+        }
+
+        return RegisterOnOwnerThread(hotkey, pressed);
+    }
+
+    public void Dispose()
+    {
+        if (!_threadInvoker.CheckAccess())
+        {
+            _threadInvoker.Invoke(DisposeOnOwnerThread);
+            return;
+        }
+
+        DisposeOnOwnerThread();
+    }
+
+    private IDisposable RegisterOnOwnerThread(HotkeyDefinition hotkey, Action pressed)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(hotkey);
@@ -49,12 +84,9 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         var modifierFlags = (uint)(hotkey.Modifiers | HotkeyModifiers.NoRepeat);
         _logger.Info($"Registering hotkey id={id} modifiers=0x{modifierFlags:X} vk=0x{hotkey.VirtualKey:X2}.");
 
-        if (!User32.RegisterHotKey(_window.Handle, id, modifierFlags, hotkey.VirtualKey))
+        if (!_platform.RegisterHotKey(_window.Handle, id, modifierFlags, hotkey.VirtualKey, out var errorCode))
         {
-            var errorCode = Marshal.GetLastPInvokeError();
-            var message = errorCode == 1408
-                ? $"Hotkey already in use: {hotkey}."
-                : $"Could not register hotkey {hotkey}.";
+            var message = CreateRegistrationFailureMessage(errorCode, hotkey);
             var exception = new Win32Exception(errorCode, message);
             _logger.Error($"Hotkey registration failed for id={id}.", exception);
             throw exception;
@@ -65,7 +97,7 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         return new HotkeyRegistration(this, id);
     }
 
-    public void Dispose()
+    private void DisposeOnOwnerThread()
     {
         if (_disposed)
         {
@@ -111,19 +143,37 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
 
     private void Unregister(int id)
     {
+        if (!_threadInvoker.CheckAccess())
+        {
+            _threadInvoker.Invoke(() => UnregisterOnOwnerThread(id));
+            return;
+        }
+
+        UnregisterOnOwnerThread(id);
+    }
+
+    private void UnregisterOnOwnerThread(int id)
+    {
         if (!_callbacks.Remove(id))
         {
             return;
         }
 
-        if (User32.UnregisterHotKey(_window.Handle, id))
+        if (_platform.UnregisterHotKey(_window.Handle, id, out var errorCode))
         {
             _logger.Info($"Hotkey unregistered id={id}.");
             return;
         }
 
-        var exception = new Win32Exception(Marshal.GetLastPInvokeError(), $"Could not unregister hotkey id={id}.");
+        var exception = new Win32Exception(errorCode, $"Could not unregister hotkey id={id}.");
         _logger.Error($"Hotkey unregister failed id={id}.", exception);
+    }
+
+    internal static string CreateRegistrationFailureMessage(int errorCode, HotkeyDefinition hotkey)
+    {
+        return errorCode == ErrorHotkeyAlreadyRegistered
+            ? $"Hotkey already in use: {hotkey}."
+            : $"Could not register hotkey {hotkey}.";
     }
 
     private sealed class MessageWindow : NativeWindow
@@ -173,6 +223,76 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
 
             _owner.Unregister(_id);
             _disposed = true;
+        }
+    }
+
+    internal interface IHotkeyThreadInvoker
+    {
+        bool CheckAccess();
+
+        T Invoke<T>(Func<T> callback);
+
+        void Invoke(Action callback);
+    }
+
+    private sealed class DispatcherHotkeyThreadInvoker : IHotkeyThreadInvoker
+    {
+        private readonly Dispatcher _dispatcher;
+
+        public DispatcherHotkeyThreadInvoker(Dispatcher dispatcher)
+        {
+            _dispatcher = dispatcher;
+        }
+
+        public bool CheckAccess()
+        {
+            return _dispatcher.CheckAccess();
+        }
+
+        public T Invoke<T>(Func<T> callback)
+        {
+            return _dispatcher.Invoke(callback);
+        }
+
+        public void Invoke(Action callback)
+        {
+            _dispatcher.Invoke(callback);
+        }
+    }
+
+    internal interface IHotkeyPlatform
+    {
+        bool RegisterHotKey(IntPtr windowHandle, int id, uint modifiers, uint virtualKey, out int errorCode);
+
+        bool UnregisterHotKey(IntPtr windowHandle, int id, out int errorCode);
+    }
+
+    private sealed class NativeHotkeyPlatform : IHotkeyPlatform
+    {
+        public static NativeHotkeyPlatform Instance { get; } = new();
+
+        public bool RegisterHotKey(IntPtr windowHandle, int id, uint modifiers, uint virtualKey, out int errorCode)
+        {
+            if (User32.RegisterHotKey(windowHandle, id, modifiers, virtualKey))
+            {
+                errorCode = 0;
+                return true;
+            }
+
+            errorCode = Marshal.GetLastPInvokeError();
+            return false;
+        }
+
+        public bool UnregisterHotKey(IntPtr windowHandle, int id, out int errorCode)
+        {
+            if (User32.UnregisterHotKey(windowHandle, id))
+            {
+                errorCode = 0;
+                return true;
+            }
+
+            errorCode = Marshal.GetLastPInvokeError();
+            return false;
         }
     }
 

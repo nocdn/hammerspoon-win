@@ -12,12 +12,25 @@ internal sealed class ToastExitAnimator
 {
     private readonly UIElement _target;
     private readonly BlurEffect _blur;
-    private Storyboard? _storyboard;
+    private readonly TimeSpan _duration;
+    private readonly double _exitBlurRadius;
+    private int _generation;
 
     public ToastExitAnimator(UIElement target, BlurEffect blur)
+        : this(
+            target,
+            blur,
+            TimeSpan.FromMilliseconds(ToastStyleMetrics.ExitDurationMs),
+            ToastStyleMetrics.ExitBlurRadius)
+    {
+    }
+
+    internal ToastExitAnimator(UIElement target, BlurEffect blur, TimeSpan duration, double exitBlurRadius)
     {
         _target = target;
         _blur = blur;
+        _duration = duration;
+        _exitBlurRadius = exitBlurRadius;
     }
 
     public void PrepareForShow()
@@ -29,13 +42,8 @@ internal sealed class ToastExitAnimator
 
     public void Cancel()
     {
-        if (_storyboard is null)
-        {
-            return;
-        }
-
-        _storyboard.Stop();
-        _storyboard = null;
+        _generation++;
+        ClearAnimations();
     }
 
     public void Begin(Action onComplete)
@@ -43,41 +51,41 @@ internal sealed class ToastExitAnimator
         ArgumentNullException.ThrowIfNull(onComplete);
         Cancel();
 
-        var duration = TimeSpan.FromMilliseconds(ToastStyleMetrics.ExitDurationMs);
         var easing = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var generation = ++_generation;
 
-        var opacityAnimation = new DoubleAnimation(1, 0, duration)
+        var opacityAnimation = new DoubleAnimation(1, 0, _duration)
         {
             EasingFunction = easing,
         };
-        Storyboard.SetTarget(opacityAnimation, _target);
-        Storyboard.SetTargetProperty(opacityAnimation, new PropertyPath(UIElement.OpacityProperty));
+        opacityAnimation.Completed += OnCompleted;
 
-        var blurAnimation = new DoubleAnimation(0, ToastStyleMetrics.ExitBlurRadius, duration)
+        var blurAnimation = new DoubleAnimation(0, _exitBlurRadius, _duration)
         {
             EasingFunction = easing,
         };
-        Storyboard.SetTarget(blurAnimation, _blur);
-        Storyboard.SetTargetProperty(blurAnimation, new PropertyPath(BlurEffect.RadiusProperty));
 
-        var storyboard = new Storyboard();
-        storyboard.Children.Add(opacityAnimation);
-        storyboard.Children.Add(blurAnimation);
-        storyboard.Completed += OnCompleted;
-
-        _storyboard = storyboard;
-        storyboard.Begin();
+        _target.BeginAnimation(UIElement.OpacityProperty, opacityAnimation);
+        _blur.BeginAnimation(BlurEffect.RadiusProperty, blurAnimation);
 
         void OnCompleted(object? sender, EventArgs e)
         {
-            storyboard.Completed -= OnCompleted;
-            if (!ReferenceEquals(_storyboard, storyboard))
+            opacityAnimation.Completed -= OnCompleted;
+            if (generation != _generation)
             {
                 return;
             }
 
-            _storyboard = null;
+            ClearAnimations();
+            _target.Opacity = 0;
+            _blur.Radius = _exitBlurRadius;
             onComplete();
         }
+    }
+
+    private void ClearAnimations()
+    {
+        _target.BeginAnimation(UIElement.OpacityProperty, null);
+        _blur.BeginAnimation(BlurEffect.RadiusProperty, null);
     }
 }
