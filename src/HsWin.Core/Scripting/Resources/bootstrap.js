@@ -36,37 +36,61 @@
     }
   });
 
-  const createAudioDevice = (device) => Object.freeze({
-    ...device,
+  const createAudioDevice = (device, kind) => {
+    const isInput = kind === "input";
+    return Object.freeze({
+      ...device,
+      kind,
 
-    getVolume() {
-      return parseJson(host.Audio.GetVolumeJson(device.id)).volume;
-    },
+      getVolume() {
+        const json = isInput
+          ? host.Audio.GetInputVolumeJson(device.id)
+          : host.Audio.GetVolumeJson(device.id);
+        return parseJson(json).volume;
+      },
 
-    setVolume(volume) {
-      return parseJson(host.Audio.SetVolumeJson(device.id, volume));
-    },
+      setVolume(volume) {
+        return parseJson(isInput
+          ? host.Audio.SetInputVolumeJson(device.id, volume)
+          : host.Audio.SetVolumeJson(device.id, volume));
+      },
 
-    getMuted() {
-      return parseJson(host.Audio.GetVolumeJson(device.id)).muted;
-    },
+      getMuted() {
+        const json = isInput
+          ? host.Audio.GetInputVolumeJson(device.id)
+          : host.Audio.GetVolumeJson(device.id);
+        return parseJson(json).muted;
+      },
 
-    setMuted(muted) {
-      return parseJson(host.Audio.SetMutedJson(device.id, muted));
-    },
+      setMuted(muted) {
+        return parseJson(isInput
+          ? host.Audio.SetInputMutedJson(device.id, muted)
+          : host.Audio.SetMutedJson(device.id, muted));
+      },
 
-    toggleMute() {
-      return parseJson(host.Audio.ToggleMuteJson(device.id));
-    }
-  });
+      toggleMute() {
+        return parseJson(isInput
+          ? host.Audio.ToggleInputMuteJson(device.id)
+          : host.Audio.ToggleMuteJson(device.id));
+      }
+    });
+  };
 
   const audiodevice = Object.freeze({
     defaultOutputDevice() {
-      return createAudioDevice(parseJson(host.Audio.GetDefaultOutputDeviceJson()));
+      return createAudioDevice(parseJson(host.Audio.GetDefaultOutputDeviceJson()), "output");
     },
 
     allOutputDevices() {
-      return parseJson(host.Audio.GetOutputDevicesJson()).map(createAudioDevice);
+      return parseJson(host.Audio.GetOutputDevicesJson()).map(device => createAudioDevice(device, "output"));
+    },
+
+    defaultInputDevice() {
+      return createAudioDevice(parseJson(host.Audio.GetDefaultInputDeviceJson()), "input");
+    },
+
+    allInputDevices() {
+      return parseJson(host.Audio.GetInputDevicesJson()).map(device => createAudioDevice(device, "input"));
     },
 
     getVolume(deviceId) {
@@ -87,6 +111,26 @@
 
     toggleMute(deviceId) {
       return parseJson(host.Audio.ToggleMuteJson(deviceId));
+    },
+
+    getInputVolume(deviceId) {
+      return parseJson(host.Audio.GetInputVolumeJson(deviceId)).volume;
+    },
+
+    setInputVolume(volume, deviceId) {
+      return parseJson(host.Audio.SetInputVolumeJson(deviceId, volume));
+    },
+
+    getInputMuted(deviceId) {
+      return parseJson(host.Audio.GetInputVolumeJson(deviceId)).muted;
+    },
+
+    setInputMuted(muted, deviceId) {
+      return parseJson(host.Audio.SetInputMutedJson(deviceId, muted));
+    },
+
+    toggleInputMute(deviceId) {
+      return parseJson(host.Audio.ToggleInputMuteJson(deviceId));
     }
   });
 
@@ -112,6 +156,215 @@
     }
   });
 
+  const audio = Object.freeze({
+    record(options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = undefined;
+      }
+
+      if (typeof callback !== "function") {
+        throw new Error("Audio record callback must be a function.");
+      }
+
+      return host.AudioCapture.Record(options, eventJson => callback(parseJson(eventJson)));
+    },
+
+    levels(options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = undefined;
+      }
+
+      if (typeof callback !== "function") {
+        throw new Error("Audio level callback must be a function.");
+      }
+
+      return host.AudioCapture.WatchLevels(options, eventJson => callback(parseJson(eventJson)));
+    }
+  });
+
+  const parseHttpResult = (resultJson) => {
+    const result = parseJson(resultJson);
+    result.text = result.body;
+
+    const contentType = result.headers && (result.headers["Content-Type"] || result.headers["content-type"]);
+    if (result.body && contentType && contentType.toLowerCase().includes("json")) {
+      try {
+        result.json = JSON.parse(result.body);
+      } catch {
+      }
+    }
+
+    return result;
+  };
+
+  const normalizeHttpOptions = (method, urlOrOptions, options) => {
+    const request = typeof urlOrOptions === "string"
+      ? { ...(options || {}), url: urlOrOptions }
+      : { ...(urlOrOptions || {}) };
+
+    if (method && !request.method) {
+      request.method = method;
+    }
+
+    if (request.json !== undefined) {
+      request.body = JSON.stringify(request.json);
+      request.contentType = request.contentType || "application/json";
+      request.headers = { ...(request.headers || {}), Accept: request.headers?.Accept || "application/json" };
+    }
+
+    return request;
+  };
+
+  const httpRequest = (method, urlOrOptions, options, callback) => {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+
+    if (typeof urlOrOptions === "object" && typeof options === "function") {
+      callback = options;
+    }
+
+    if (typeof callback !== "function") {
+      throw new Error("HTTP callback must be a function.");
+    }
+
+    return host.Http.Request(normalizeHttpOptions(method, urlOrOptions, options), resultJson => callback(parseHttpResult(resultJson)));
+  };
+
+  const http = Object.freeze({
+    request(options, callback) {
+      return httpRequest(null, options, undefined, callback);
+    },
+
+    get(urlOrOptions, options, callback) {
+      return httpRequest("GET", urlOrOptions, options, callback);
+    },
+
+    post(urlOrOptions, options, callback) {
+      return httpRequest("POST", urlOrOptions, options, callback);
+    },
+
+    put(urlOrOptions, options, callback) {
+      return httpRequest("PUT", urlOrOptions, options, callback);
+    },
+
+    patch(urlOrOptions, options, callback) {
+      return httpRequest("PATCH", urlOrOptions, options, callback);
+    },
+
+    delete(urlOrOptions, options, callback) {
+      return httpRequest("DELETE", urlOrOptions, options, callback);
+    }
+  });
+
+  const formatElapsedSeconds = (startedAt) => {
+    const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  };
+
+  const createOperationToast = (text, options) => {
+    let currentText = String(text);
+    let currentOptions = { type: "normal", loading: true, durationMs: 60000, elapsed: true, ...(options || {}) };
+    let startedAt = Date.now();
+    let timer = null;
+    let disposed = false;
+
+    const render = () => {
+      if (disposed) {
+        return;
+      }
+
+      const showElapsed = currentOptions.elapsed !== false;
+      const renderedText = showElapsed
+        ? `${currentText} ${formatElapsedSeconds(startedAt)}`
+        : currentText;
+      const { elapsed, ...alertOptions } = currentOptions;
+      host.Alerts.Show(renderedText, alertOptions);
+    };
+
+    const ensureTimer = () => {
+      const wantsElapsed = currentOptions.elapsed !== false;
+      if (wantsElapsed && !timer) {
+        timer = host.Timers.DoEvery(1000, render);
+      } else if (!wantsElapsed && timer) {
+        timer.stop();
+        timer = null;
+      }
+    };
+
+    const stopTimer = () => {
+      if (timer) {
+        timer.stop();
+        timer = null;
+      }
+    };
+
+    const api = {
+      update(nextText, nextOptions) {
+        currentText = String(nextText);
+        currentOptions = { ...currentOptions, ...(nextOptions || {}) };
+        if (nextOptions && nextOptions.resetElapsed) {
+          startedAt = Date.now();
+        }
+
+        ensureTimer();
+        render();
+        return api;
+      },
+
+      loading(nextText, nextOptions) {
+        return api.update(nextText, { type: "normal", loading: true, durationMs: 60000, elapsed: false, ...(nextOptions || {}) });
+      },
+
+      success(nextText, nextOptions) {
+        stopTimer();
+        currentOptions = { type: "success", durationMs: 2500, elapsed: false, ...(nextOptions || {}) };
+        currentText = String(nextText);
+        render();
+        return api;
+      },
+
+      error(nextText, nextOptions) {
+        stopTimer();
+        currentOptions = { type: "error", durationMs: 6000, elapsed: false, ...(nextOptions || {}) };
+        currentText = String(nextText);
+        render();
+        return api;
+      },
+
+      hide() {
+        api.dispose();
+        host.Alerts.Show("Hidden", { durationMs: 0 });
+      },
+
+      stop() {
+        api.dispose();
+      },
+
+      dispose() {
+        if (disposed) {
+          return;
+        }
+
+        disposed = true;
+        stopTimer();
+      },
+
+      delete() {
+        api.dispose();
+      }
+    };
+
+    ensureTimer();
+    render();
+    return Object.freeze(api);
+  };
+
   globalThis.hs = Object.freeze({
     execute(command, options) {
       return parseJson(host.Shell.ExecuteCommandJson(command, options));
@@ -120,6 +373,10 @@
     alert: Object.freeze({
       show(text, optionsOrKind, durationMs) {
         host.Alerts.Show(text, optionsOrKind, durationMs);
+      },
+
+      operation(text, options) {
+        return createOperationToast(text, options);
       }
     }),
 
@@ -129,6 +386,27 @@
     hotkey: Object.freeze({
       bind(modifiers, key, pressedFn) {
         return host.Hotkeys.Bind(modifiers, key, pressedFn);
+      },
+
+      bindHeld(modifiers, key, pressedFn, releasedFn, options) {
+        if (typeof pressedFn !== "function") {
+          throw new Error("Held hotkey pressed callback must be a function.");
+        }
+
+        if (typeof releasedFn !== "function") {
+          throw new Error("Held hotkey released callback must be a function.");
+        }
+
+        return host.Hotkeys.BindHeld(
+          modifiers,
+          key,
+          eventJson => pressedFn(parseJson(eventJson)),
+          eventJson => releasedFn(parseJson(eventJson)),
+          options);
+      },
+
+      whileHeld(modifiers, key, pressedFn, releasedFn, options) {
+        return this.bindHeld(modifiers, key, pressedFn, releasedFn, options);
       }
     }),
 
@@ -177,6 +455,8 @@
 
     audiodevice,
     sound,
+    audio,
+    http,
 
     mouse: Object.freeze({
       getCurrentScreen() {

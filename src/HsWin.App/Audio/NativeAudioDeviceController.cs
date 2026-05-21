@@ -20,20 +20,76 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
 
     public AudioDeviceSnapshot GetDefaultOutputDevice()
     {
-        var defaultDeviceId = GetDefaultOutputDeviceId();
+        var defaultDeviceId = GetDefaultDeviceId(AudioDataFlow.Render);
         return WithDevice(defaultDeviceId, device => CreateDeviceSnapshot(device, defaultDeviceId));
     }
 
     public IReadOnlyList<AudioDeviceSnapshot> GetOutputDevices()
+    {
+        return GetDevices(AudioDataFlow.Render, "output");
+    }
+
+    public AudioDeviceSnapshot GetDefaultInputDevice()
+    {
+        var defaultDeviceId = GetDefaultDeviceId(AudioDataFlow.Capture);
+        return WithDevice(defaultDeviceId, device => CreateDeviceSnapshot(device, defaultDeviceId));
+    }
+
+    public IReadOnlyList<AudioDeviceSnapshot> GetInputDevices()
+    {
+        return GetDevices(AudioDataFlow.Capture, "input");
+    }
+
+    public AudioDeviceVolumeSnapshot GetVolume(string? deviceId)
+    {
+        return WithDevice(deviceId, AudioDataFlow.Render, CreateVolumeSnapshot);
+    }
+
+    public AudioDeviceVolumeSnapshot SetVolume(string? deviceId, double volume)
+    {
+        return SetVolume(deviceId, AudioDataFlow.Render, volume, "Audio volume");
+    }
+
+    public AudioDeviceVolumeSnapshot SetMuted(string? deviceId, bool muted)
+    {
+        return SetMuted(deviceId, AudioDataFlow.Render, muted, "Audio mute");
+    }
+
+    public AudioDeviceVolumeSnapshot ToggleMute(string? deviceId)
+    {
+        return ToggleMute(deviceId, AudioDataFlow.Render, "Audio mute");
+    }
+
+    public AudioDeviceVolumeSnapshot GetInputVolume(string? deviceId)
+    {
+        return WithDevice(deviceId, AudioDataFlow.Capture, CreateVolumeSnapshot);
+    }
+
+    public AudioDeviceVolumeSnapshot SetInputVolume(string? deviceId, double volume)
+    {
+        return SetVolume(deviceId, AudioDataFlow.Capture, volume, "Audio input volume");
+    }
+
+    public AudioDeviceVolumeSnapshot SetInputMuted(string? deviceId, bool muted)
+    {
+        return SetMuted(deviceId, AudioDataFlow.Capture, muted, "Audio input mute");
+    }
+
+    public AudioDeviceVolumeSnapshot ToggleInputMute(string? deviceId)
+    {
+        return ToggleMute(deviceId, AudioDataFlow.Capture, "Audio input mute");
+    }
+
+    private IReadOnlyList<AudioDeviceSnapshot> GetDevices(AudioDataFlow dataFlow, string description)
     {
         IMMDeviceEnumerator? enumerator = null;
         IMMDeviceCollection? collection = null;
         try
         {
             enumerator = CreateDeviceEnumerator();
-            enumerator.EnumAudioEndpoints(AudioDataFlow.Render, DeviceState.Active, out collection);
+            enumerator.EnumAudioEndpoints(dataFlow, DeviceState.Active, out collection);
             collection.GetCount(out var count);
-            var defaultDeviceId = GetDefaultOutputDeviceId(enumerator);
+            var defaultDeviceId = GetDefaultDeviceId(enumerator, dataFlow);
             var devices = new List<AudioDeviceSnapshot>((int)count);
 
             for (uint index = 0; index < count; index++)
@@ -50,7 +106,7 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
                 }
             }
 
-            _logger.Info($"Audio output devices enumerated count={devices.Count}.");
+            _logger.Info($"Audio {description} devices enumerated count={devices.Count}.");
             return devices;
         }
         finally
@@ -60,14 +116,9 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
         }
     }
 
-    public AudioDeviceVolumeSnapshot GetVolume(string? deviceId)
+    private AudioDeviceVolumeSnapshot SetVolume(string? deviceId, AudioDataFlow dataFlow, double volume, string description)
     {
-        return WithDevice(deviceId, CreateVolumeSnapshot);
-    }
-
-    public AudioDeviceVolumeSnapshot SetVolume(string? deviceId, double volume)
-    {
-        return WithDevice(deviceId, device =>
+        return WithDevice(deviceId, dataFlow, device =>
         {
             IAudioEndpointVolume? endpoint = null;
             try
@@ -75,7 +126,7 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
                 endpoint = ActivateEndpointVolume(device);
                 endpoint.SetMasterVolumeLevelScalar((float)(volume / 100), EventContext);
                 var snapshot = CreateVolumeSnapshot(device, endpoint);
-                _logger.Info($"Audio volume set id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
+                _logger.Info($"{description} set id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
                 return snapshot;
             }
             finally
@@ -85,9 +136,9 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
         });
     }
 
-    public AudioDeviceVolumeSnapshot SetMuted(string? deviceId, bool muted)
+    private AudioDeviceVolumeSnapshot SetMuted(string? deviceId, AudioDataFlow dataFlow, bool muted, string description)
     {
-        return WithDevice(deviceId, device =>
+        return WithDevice(deviceId, dataFlow, device =>
         {
             IAudioEndpointVolume? endpoint = null;
             try
@@ -95,7 +146,7 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
                 endpoint = ActivateEndpointVolume(device);
                 endpoint.SetMute(muted, EventContext);
                 var snapshot = CreateVolumeSnapshot(device, endpoint);
-                _logger.Info($"Audio mute set id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
+                _logger.Info($"{description} set id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
                 return snapshot;
             }
             finally
@@ -105,9 +156,9 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
         });
     }
 
-    public AudioDeviceVolumeSnapshot ToggleMute(string? deviceId)
+    private AudioDeviceVolumeSnapshot ToggleMute(string? deviceId, AudioDataFlow dataFlow, string description)
     {
-        return WithDevice(deviceId, device =>
+        return WithDevice(deviceId, dataFlow, device =>
         {
             IAudioEndpointVolume? endpoint = null;
             try
@@ -116,7 +167,7 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
                 endpoint.GetMute(out var muted);
                 endpoint.SetMute(!muted, EventContext);
                 var snapshot = CreateVolumeSnapshot(device, endpoint);
-                _logger.Info($"Audio mute toggled id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
+                _logger.Info($"{description} toggled id='{snapshot.Id}' volume={snapshot.Volume} muted={snapshot.Muted}.");
                 return snapshot;
             }
             finally
@@ -128,6 +179,11 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
 
     private T WithDevice<T>(string? deviceId, Func<IMMDevice, T> action)
     {
+        return WithDevice(deviceId, AudioDataFlow.Render, action);
+    }
+
+    private T WithDevice<T>(string? deviceId, AudioDataFlow dataFlow, Func<IMMDevice, T> action)
+    {
         IMMDeviceEnumerator? enumerator = null;
         IMMDevice? device = null;
         try
@@ -135,7 +191,7 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
             enumerator = CreateDeviceEnumerator();
             if (string.IsNullOrWhiteSpace(deviceId))
             {
-                enumerator.GetDefaultAudioEndpoint(AudioDataFlow.Render, AudioRole.Multimedia, out device);
+                enumerator.GetDefaultAudioEndpoint(dataFlow, AudioRole.Multimedia, out device);
             }
             else
             {
@@ -151,13 +207,13 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
         }
     }
 
-    private string GetDefaultOutputDeviceId()
+    private string GetDefaultDeviceId(AudioDataFlow dataFlow)
     {
         IMMDeviceEnumerator? enumerator = null;
         try
         {
             enumerator = CreateDeviceEnumerator();
-            return GetDefaultOutputDeviceId(enumerator);
+            return GetDefaultDeviceId(enumerator, dataFlow);
         }
         finally
         {
@@ -165,12 +221,12 @@ internal sealed partial class NativeAudioDeviceController : IAudioDeviceControll
         }
     }
 
-    private static string GetDefaultOutputDeviceId(IMMDeviceEnumerator enumerator)
+    private static string GetDefaultDeviceId(IMMDeviceEnumerator enumerator, AudioDataFlow dataFlow)
     {
         IMMDevice? defaultDevice = null;
         try
         {
-            enumerator.GetDefaultAudioEndpoint(AudioDataFlow.Render, AudioRole.Multimedia, out defaultDevice);
+            enumerator.GetDefaultAudioEndpoint(dataFlow, AudioRole.Multimedia, out defaultDevice);
             defaultDevice.GetId(out var defaultDeviceId);
             return defaultDeviceId;
         }

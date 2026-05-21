@@ -1,0 +1,17 @@
+namespace HsWin.Core.Audio;
+
+public sealed record AudioCaptureEvent(
+    string Type,
+    string? DeviceId = null,
+    string? DeviceName = null,
+    string? Path = null,
+    string? Format = null,
+    int? SampleRate = null,
+    int? Channels = null,
+    long? Bytes = null,
+    double? DurationMs = null,
+    double? Peak = null,
+    double? Rms = null,
+    string? Reason = null,
+    string? ErrorCode = null,
+    string? Message = null);

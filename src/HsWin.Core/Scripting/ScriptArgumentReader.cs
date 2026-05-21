@@ -71,6 +71,88 @@ public static class ScriptArgumentReader
         return null;
     }
 
+    public static IEnumerable<object?> EnumerateIndexedValues(object? value)
+    {
+        if (IsMissing(value))
+        {
+            yield break;
+        }
+
+        if (value is ScriptObject scriptObject)
+        {
+            foreach (var index in scriptObject.PropertyIndices.Order())
+            {
+                yield return scriptObject.GetProperty(index);
+            }
+
+            yield break;
+        }
+
+        if (value is IEnumerable enumerable and not string)
+        {
+            foreach (var item in enumerable)
+            {
+                yield return item;
+            }
+        }
+    }
+
+    public static IReadOnlyDictionary<string, string> ReadStringMap(object? value, string argumentName)
+    {
+        if (IsMissing(value))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (value is ScriptObject scriptObject)
+        {
+            foreach (var propertyName in scriptObject.PropertyNames)
+            {
+                if (string.IsNullOrWhiteSpace(propertyName))
+                {
+                    continue;
+                }
+
+                var propertyValue = scriptObject.GetProperty(propertyName);
+                if (!IsMissing(propertyValue))
+                {
+                    result[propertyName] = RequireText(propertyValue, propertyName);
+                }
+            }
+
+            return result;
+        }
+
+        if (value is IReadOnlyDictionary<string, object?> readOnlyDictionary)
+        {
+            foreach (var item in readOnlyDictionary)
+            {
+                if (!IsMissing(item.Value))
+                {
+                    result[item.Key] = RequireText(item.Value, item.Key);
+                }
+            }
+
+            return result;
+        }
+
+        if (value is IDictionary dictionary)
+        {
+            foreach (DictionaryEntry item in dictionary)
+            {
+                if (item.Key is string key && !IsMissing(item.Value))
+                {
+                    result[key] = RequireText(item.Value, key);
+                }
+            }
+
+            return result;
+        }
+
+        throw new ArgumentException($"{argumentName} must be an object.", argumentName);
+    }
+
     public static string RequireText(object? value, string argumentName)
     {
         if (IsMissing(value))

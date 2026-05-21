@@ -29,6 +29,20 @@ public sealed class AudioScriptApi
         return ScriptJson.Serialize(devices);
     }
 
+    public string GetDefaultInputDeviceJson()
+    {
+        var device = _audioDevices.GetDefaultInputDevice();
+        _logger.Info($"Script hs.audiodevice.defaultInputDevice() returned id='{device.Id}' name='{device.Name}'.");
+        return ScriptJson.Serialize(device);
+    }
+
+    public string GetInputDevicesJson()
+    {
+        var devices = _audioDevices.GetInputDevices();
+        _logger.Info($"Script hs.audiodevice.allInputDevices() returned {devices.Count} devices.");
+        return ScriptJson.Serialize(devices);
+    }
+
     public string GetVolumeJson(object? deviceId = null)
     {
         var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
@@ -60,6 +74,40 @@ public sealed class AudioScriptApi
         var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
         var result = _audioDevices.ToggleMute(normalizedDeviceId);
         _logger.Info($"Script hs.audiodevice.toggleMute() toggled id='{result.Id}' volume={result.Volume.ToString(CultureInfo.InvariantCulture)} muted={result.Muted}.");
+        return ScriptJson.Serialize(result);
+    }
+
+    public string GetInputVolumeJson(object? deviceId = null)
+    {
+        var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
+        var result = _audioDevices.GetInputVolume(normalizedDeviceId);
+        _logger.Info($"Script hs.audiodevice.getInputVolume() returned id='{result.Id}' volume={result.Volume.ToString(CultureInfo.InvariantCulture)} muted={result.Muted}.");
+        return ScriptJson.Serialize(result);
+    }
+
+    public string SetInputVolumeJson(object? deviceId, object? volume)
+    {
+        var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
+        var normalizedVolume = ConvertAudioVolume(volume);
+        var result = _audioDevices.SetInputVolume(normalizedDeviceId, normalizedVolume);
+        _logger.Info($"Script hs.audiodevice.setInputVolume() set id='{result.Id}' volume={result.Volume.ToString(CultureInfo.InvariantCulture)} muted={result.Muted}.");
+        return ScriptJson.Serialize(result);
+    }
+
+    public string SetInputMutedJson(object? deviceId, object? muted)
+    {
+        var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
+        var normalizedMuted = ScriptArgumentReader.RequireBoolean(muted, "muted");
+        var result = _audioDevices.SetInputMuted(normalizedDeviceId, normalizedMuted);
+        _logger.Info($"Script hs.audiodevice.setInputMuted() set id='{result.Id}' volume={result.Volume.ToString(CultureInfo.InvariantCulture)} muted={result.Muted}.");
+        return ScriptJson.Serialize(result);
+    }
+
+    public string ToggleInputMuteJson(object? deviceId = null)
+    {
+        var normalizedDeviceId = ScriptArgumentReader.OptionalString(deviceId);
+        var result = _audioDevices.ToggleInputMute(normalizedDeviceId);
+        _logger.Info($"Script hs.audiodevice.toggleInputMute() toggled id='{result.Id}' volume={result.Volume.ToString(CultureInfo.InvariantCulture)} muted={result.Muted}.");
         return ScriptJson.Serialize(result);
     }
 

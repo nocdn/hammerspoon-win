@@ -4,6 +4,7 @@ using HsWin.Core.Audio;
 using HsWin.Core.Clipboard;
 using HsWin.Core.Config;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Http;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
@@ -11,6 +12,7 @@ using HsWin.Core.Mouse;
 using HsWin.Core.Scripting;
 using HsWin.Core.Shell;
 using HsWin.Core.Timers;
+using HsHttpRequestOptions = HsWin.Core.Http.HttpRequestOptions;
 
 namespace HsWin.Core.Tests;
 
@@ -158,6 +160,156 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadRegistersHeldHotkeyCallbacks()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""
+            hs.hotkey.bindHeld(["ctrl", "alt"], "space", event => {
+              hs.alert.show(`down:${event.key}`, "normal", 1);
+            }, event => {
+              hs.alert.show(`up:${event.key}`, "normal", 1);
+            });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.True(watch.Options.Blocking);
+        Assert.False(watch.Options.IncludeInjected);
+
+        var down = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x20,
+            "space",
+            ["ctrl", "alt"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false));
+        var repeat = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x20,
+            "space",
+            ["ctrl", "alt"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false));
+        var up = watch.Callback(new KeyboardEventSnapshot(
+            "keyup",
+            0x20,
+            "space",
+            ["ctrl", "alt"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            IsKeyDown: false,
+            IsKeyUp: true,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false));
+
+        Assert.True(down);
+        Assert.True(repeat);
+        Assert.True(up);
+        Assert.Collection(
+            presenter.Requests,
+            request => Assert.Equal("down:space", request.Text),
+            request => Assert.Equal("up:space", request.Text));
+    }
+
+    [Fact]
+    public void HeldHotkeyReleasesWhenRequiredModifierIsReleased()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""
+            hs.hotkey.whileHeld(["ctrl", "alt"], "R", () => hs.alert.show("start", "normal", 1), () => hs.alert.show("stop", "normal", 1));
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        _ = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            (uint)'R',
+            "r",
+            ["ctrl", "alt"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false));
+        var releasedModifier = watch.Callback(new KeyboardEventSnapshot(
+            "keyup",
+            KeyboardKeyRules.VkLeftMenu,
+            "alt",
+            ["ctrl"],
+            (uint)HotkeyModifiers.Control,
+            IsKeyDown: false,
+            IsKeyUp: true,
+            IsModifier: true,
+            IsInjected: false,
+            IsExtended: false));
+
+        Assert.True(releasedModifier);
+        Assert.Collection(
+            presenter.Requests,
+            request => Assert.Equal("start", request.Text),
+            request => Assert.Equal("stop", request.Text));
+    }
+
+    [Fact]
+    public void HeldHotkeyCanAllowExtraModifiersAndDisableBlocking()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""
+            hs.hotkey.bindHeld(["ctrl"], "A", () => hs.alert.show("start", "normal", 1), () => hs.alert.show("stop", "normal", 1), {
+              allowExtraModifiers: true,
+              blocking: false,
+              includeInjected: true
+            });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.False(watch.Options.Blocking);
+        Assert.True(watch.Options.IncludeInjected);
+        var swallowed = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            (uint)'A',
+            "a",
+            ["ctrl", "shift"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Shift),
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false));
+
+        Assert.False(swallowed);
+        Assert.Equal("start", Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
     public void ReloadDisposesPreviousHotkeyBindings()
     {
         var presenter = new CapturingAlertPresenter();
@@ -171,6 +323,35 @@ public sealed class ScriptRuntimeTests
         Assert.True(oldRegistration.IsDisposed);
         Assert.Equal(2, hotkeys.Registrations.Count);
         Assert.False(hotkeys.Registrations[1].IsDisposed);
+    }
+
+    [Fact]
+    public void ReloadDisposesPreviousHeldHotkeyBindings()
+    {
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""hs.hotkey.bindHeld([], "F13", () => {}, () => {});""");
+        var watch = Assert.Single(keyboardEvents.Watches).Registration;
+        runtime.Reload("""console.log("new");""");
+
+        Assert.True(watch.IsDisposed);
+    }
+
+    [Fact]
+    public void HeldHotkeyRejectsMouseButtons()
+    {
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            KeyboardEvents = new CapturingKeyboardEventService()
+        });
+
+        var exception = Assert.ThrowsAny<Exception>(() =>
+            runtime.Reload("""hs.hotkey.bindHeld([], "mouse.middle", () => {}, () => {});"""));
+        Assert.Contains("keyboard keys only", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -387,6 +568,127 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesHttpRequestWithMultipartFileUpload()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var callbacks = new QueuedScriptCallbackScheduler();
+        var http = new CapturingHttpService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Http = http,
+            CallbackScheduler = callbacks
+        });
+
+        runtime.Reload("""
+            hs.http.post("https://api.example.test/transcribe", {
+              headers: { Authorization: "Bearer test-token" },
+              multipart: [
+                { name: "file", path: "C:\\Temp\\clip.wav", fileName: "clip.wav", contentType: "audio/wav" },
+                { name: "model", value: "scribe-v1" }
+              ],
+              timeoutMs: 1234
+            }, result => {
+              hs.alert.show(`${result.success}:${result.statusCode}:${result.json.text}`, "normal", 1);
+            });
+            """);
+
+        var request = Assert.Single(http.Requests);
+        Assert.Equal("POST", request.Options.Method);
+        Assert.Equal("https://api.example.test/transcribe", request.Options.Url);
+        Assert.Equal("Bearer test-token", request.Options.Headers["Authorization"]);
+        Assert.Equal(1234, request.Options.TimeoutMs);
+        Assert.Collection(
+            request.Options.Multipart,
+            part =>
+            {
+                Assert.Equal("file", part.Name);
+                Assert.Equal(@"C:\Temp\clip.wav", part.Path);
+                Assert.Equal("clip.wav", part.FileName);
+                Assert.Equal("audio/wav", part.ContentType);
+            },
+            part =>
+            {
+                Assert.Equal("model", part.Name);
+                Assert.Equal("scribe-v1", part.Value);
+            });
+
+        request.Emit(new HttpResponseSnapshot(
+            Success: true,
+            StatusCode: 200,
+            Status: "OK",
+            new Dictionary<string, string> { ["Content-Type"] = "application/json" },
+            Body: """{"text":"hello world"}""",
+            TimedOut: false,
+            Error: null));
+        callbacks.RunNext();
+
+        var alert = Assert.Single(presenter.Requests);
+        Assert.Equal("true:200:hello world", alert.Text);
+    }
+
+    [Fact]
+    public void ReloadDisposesOutstandingHttpRequests()
+    {
+        var http = new CapturingHttpService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Http = http
+        });
+
+        runtime.Reload("""hs.http.get("https://example.test", () => {});""");
+        var request = Assert.Single(http.Requests);
+        runtime.Reload("""console.log("reloaded");""");
+
+        Assert.True(request.IsDisposed);
+    }
+
+    [Fact]
+    public void ReloadExposesOperationToastHandle()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var timers = new CapturingScriptTimerService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Timers = timers
+        });
+
+        runtime.Reload("""
+            const toast = hs.alert.operation("Recording");
+            toast.loading("Uploading");
+            toast.loading("Transcribing");
+            toast.success("Copied");
+            """);
+
+        Assert.Single(timers.Timers);
+        Assert.Collection(
+            presenter.Requests,
+            request =>
+            {
+                Assert.StartsWith("Recording ", request.Text, StringComparison.Ordinal);
+                Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+            },
+            request =>
+            {
+                Assert.Equal("Uploading", request.Text);
+                Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+            },
+            request =>
+            {
+                Assert.Equal("Transcribing", request.Text);
+                Assert.Equal(AlertIcon.Loader, request.EffectiveIcon);
+            },
+            request =>
+            {
+                Assert.Equal("Copied", request.Text);
+                Assert.Equal(AlertKind.Success, request.Kind);
+                Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
+            });
+        Assert.True(Assert.Single(timers.Timers).IsDisposed);
+    }
+
+    [Fact]
     public void ReloadDisposesOutstandingTaskRunCallbacks()
     {
         var presenter = new CapturingAlertPresenter();
@@ -482,6 +784,124 @@ public sealed class ScriptRuntimeTests
         Assert.Equal(["default-id:33", "default-id:toggle"], audio.Actions);
         var request = Assert.Single(presenter.Requests);
         Assert.Equal("2:Speakers:33:true", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesAudioInputDeviceApis()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var audio = new CapturingAudioDeviceController(
+            new AudioDeviceSnapshot("speakers-id", "Speakers", IsDefault: true, Volume: 25, Muted: false));
+        audio.SetInputDevices(
+            new AudioDeviceSnapshot("mic-id", "Studio Mic", IsDefault: true, Volume: 75, Muted: false),
+            new AudioDeviceSnapshot("webcam-id", "Webcam Mic", IsDefault: false, Volume: 55, Muted: true));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            AudioDevices = audio
+        });
+
+        runtime.Reload("""
+            const mic = hs.audiodevice.defaultInputDevice();
+            const inputs = hs.audiodevice.allInputDevices();
+            mic.setVolume(62);
+            const mute = mic.toggleMute();
+            hs.alert.show(`${inputs.length}:${mic.kind}:${mic.name}:${hs.audiodevice.getInputVolume()}:${mute.muted}`, "normal", 1);
+            """);
+
+        Assert.Equal(["input:mic-id:62", "input:mic-id:toggle"], audio.Actions);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("2:input:Studio Mic:62:true", request.Text);
+    }
+
+    [Fact]
+    public void ReloadExposesAudioRecordWithFriendlyOptionsAndCallbacks()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var callbacks = new QueuedScriptCallbackScheduler();
+        var capture = new CapturingAudioCaptureService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            AudioCapture = capture,
+            CallbackScheduler = callbacks
+        });
+
+        runtime.Reload("""
+            const recorder = hs.audio.record({
+              path: "C:\\Temp\\voice.m4a",
+              deviceId: "mic-id",
+              quality: "high",
+              levelIntervalMs: 0
+            }, event => {
+              if (event.type === "stopped") {
+                hs.alert.show(`${event.path}:${event.format}:${event.bytes}`, "normal", 1);
+              }
+            });
+
+            hs.alert.show(`${recorder.path}:${recorder.isRecording}`, "normal", 1);
+            """);
+
+        var recording = Assert.Single(capture.Recordings);
+        Assert.Equal(@"C:\Temp\voice.m4a", recording.Options.Path);
+        Assert.Equal("mic-id", recording.Options.DeviceId);
+        Assert.Equal(AudioRecordingFormat.Aac, recording.Options.Format);
+        Assert.Equal(256, recording.Options.BitrateKbps);
+        Assert.Equal(0, recording.Options.LevelIntervalMs);
+
+        recording.Emit(new AudioCaptureEvent("stopped", Path: @"C:\Temp\voice.m4a", Format: "m4a", Bytes: 1234));
+        callbacks.RunNext();
+
+        Assert.Collection(
+            presenter.Requests,
+            request => Assert.Equal(@"C:\Temp\voice.m4a:true", request.Text),
+            request => Assert.Equal(@"C:\Temp\voice.m4a:m4a:1234", request.Text));
+    }
+
+    [Fact]
+    public void ReloadDisposesAudioRecordingsOnReload()
+    {
+        var capture = new CapturingAudioCaptureService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            AudioCapture = capture
+        });
+
+        runtime.Reload("""hs.audio.record("C:\\Temp\\note.wav", () => {});""");
+        var recording = Assert.Single(capture.Recordings);
+        runtime.Reload("""console.log("reloaded");""");
+
+        Assert.True(recording.IsDisposed);
+    }
+
+    [Fact]
+    public void ReloadExposesAudioLevels()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var callbacks = new QueuedScriptCallbackScheduler();
+        var capture = new CapturingAudioCaptureService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            AudioCapture = capture,
+            CallbackScheduler = callbacks
+        });
+
+        runtime.Reload("""
+            hs.audio.levels({ deviceId: "mic-id", intervalMs: 75 }, event => {
+              hs.alert.show(`${event.type}:${event.deviceId}:${event.peak}:${event.rms}`, "normal", 1);
+            });
+            """);
+
+        var watch = Assert.Single(capture.LevelWatches);
+        Assert.Equal("mic-id", watch.Options.DeviceId);
+        Assert.Equal(75, watch.Options.IntervalMs);
+
+        watch.Emit(new AudioCaptureEvent("level", DeviceId: "mic-id", Peak: 0.5, Rms: 0.25));
+        callbacks.RunNext();
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("level:mic-id:0.5:0.25", request.Text);
     }
 
     [Fact]
@@ -976,6 +1396,43 @@ public sealed class ScriptRuntimeTests
 
     private sealed record CapturingLaunch(string Target, LaunchOptions Options);
 
+    private sealed class CapturingHttpService : IHttpService
+    {
+        public List<CapturingHttpRequest> Requests { get; } = [];
+
+        public IDisposable Send(HsHttpRequestOptions options, Action<HttpResponseSnapshot> callback)
+        {
+            var request = new CapturingHttpRequest(options, callback);
+            Requests.Add(request);
+            return request;
+        }
+    }
+
+    private sealed class CapturingHttpRequest : IDisposable
+    {
+        private readonly Action<HttpResponseSnapshot> _callback;
+
+        public CapturingHttpRequest(HsHttpRequestOptions options, Action<HttpResponseSnapshot> callback)
+        {
+            Options = options;
+            _callback = callback;
+        }
+
+        public HsHttpRequestOptions Options { get; }
+
+        public bool IsDisposed { get; private set; }
+
+        public void Emit(HttpResponseSnapshot response)
+        {
+            _callback(response);
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
+        }
+    }
+
     private sealed class QueuedScriptCallbackScheduler : IScriptCallbackScheduler
     {
         private readonly Queue<Action> _callbacks = [];
@@ -1014,69 +1471,213 @@ public sealed class ScriptRuntimeTests
 
     private sealed class CapturingAudioDeviceController : IAudioDeviceController
     {
-        private readonly Dictionary<string, AudioDeviceSnapshot> _devices;
-        private readonly string _defaultDeviceId;
+        private readonly Dictionary<string, AudioDeviceSnapshot> _outputDevices;
+        private readonly Dictionary<string, AudioDeviceSnapshot> _inputDevices = new(StringComparer.OrdinalIgnoreCase);
+        private string _defaultOutputDeviceId = string.Empty;
+        private string _defaultInputDeviceId = string.Empty;
 
         public CapturingAudioDeviceController(params AudioDeviceSnapshot[] devices)
         {
-            _devices = devices.ToDictionary(device => device.Id, StringComparer.OrdinalIgnoreCase);
-            _defaultDeviceId = devices.Single(device => device.IsDefault).Id;
+            _outputDevices = devices.ToDictionary(device => device.Id, StringComparer.OrdinalIgnoreCase);
+            _defaultOutputDeviceId = devices.Single(device => device.IsDefault).Id;
+            SetInputDevices(devices);
         }
 
         public List<string> Actions { get; } = [];
 
+        public void SetInputDevices(params AudioDeviceSnapshot[] devices)
+        {
+            _inputDevices.Clear();
+            foreach (var device in devices)
+            {
+                _inputDevices.Add(device.Id, device);
+            }
+
+            _defaultInputDeviceId = devices.Single(device => device.IsDefault).Id;
+        }
+
         public AudioDeviceSnapshot GetDefaultOutputDevice()
         {
-            return _devices[_defaultDeviceId];
+            return _outputDevices[_defaultOutputDeviceId];
         }
 
         public IReadOnlyList<AudioDeviceSnapshot> GetOutputDevices()
         {
-            return _devices.Values.ToArray();
+            return _outputDevices.Values.ToArray();
+        }
+
+        public AudioDeviceSnapshot GetDefaultInputDevice()
+        {
+            return _inputDevices[_defaultInputDeviceId];
+        }
+
+        public IReadOnlyList<AudioDeviceSnapshot> GetInputDevices()
+        {
+            return _inputDevices.Values.ToArray();
         }
 
         public AudioDeviceVolumeSnapshot GetVolume(string? deviceId)
         {
-            return ToVolumeSnapshot(ResolveDevice(deviceId));
+            return ToVolumeSnapshot(ResolveOutputDevice(deviceId));
         }
 
         public AudioDeviceVolumeSnapshot SetVolume(string? deviceId, double volume)
         {
-            var device = ResolveDevice(deviceId);
+            var device = ResolveOutputDevice(deviceId);
             Actions.Add($"{device.Id}:{volume}");
             var updated = device with { Volume = volume };
-            _devices[device.Id] = updated;
+            _outputDevices[device.Id] = updated;
             return ToVolumeSnapshot(updated);
         }
 
         public AudioDeviceVolumeSnapshot SetMuted(string? deviceId, bool muted)
         {
-            var device = ResolveDevice(deviceId);
+            var device = ResolveOutputDevice(deviceId);
             Actions.Add($"{device.Id}:muted:{muted}");
             var updated = device with { Muted = muted };
-            _devices[device.Id] = updated;
+            _outputDevices[device.Id] = updated;
             return ToVolumeSnapshot(updated);
         }
 
         public AudioDeviceVolumeSnapshot ToggleMute(string? deviceId)
         {
-            var device = ResolveDevice(deviceId);
+            var device = ResolveOutputDevice(deviceId);
             Actions.Add($"{device.Id}:toggle");
             var updated = device with { Muted = !device.Muted };
-            _devices[device.Id] = updated;
+            _outputDevices[device.Id] = updated;
             return ToVolumeSnapshot(updated);
         }
 
-        private AudioDeviceSnapshot ResolveDevice(string? deviceId)
+        public AudioDeviceVolumeSnapshot GetInputVolume(string? deviceId)
+        {
+            return ToVolumeSnapshot(ResolveInputDevice(deviceId));
+        }
+
+        public AudioDeviceVolumeSnapshot SetInputVolume(string? deviceId, double volume)
+        {
+            var device = ResolveInputDevice(deviceId);
+            Actions.Add($"input:{device.Id}:{volume}");
+            var updated = device with { Volume = volume };
+            _inputDevices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        public AudioDeviceVolumeSnapshot SetInputMuted(string? deviceId, bool muted)
+        {
+            var device = ResolveInputDevice(deviceId);
+            Actions.Add($"input:{device.Id}:muted:{muted}");
+            var updated = device with { Muted = muted };
+            _inputDevices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        public AudioDeviceVolumeSnapshot ToggleInputMute(string? deviceId)
+        {
+            var device = ResolveInputDevice(deviceId);
+            Actions.Add($"input:{device.Id}:toggle");
+            var updated = device with { Muted = !device.Muted };
+            _inputDevices[device.Id] = updated;
+            return ToVolumeSnapshot(updated);
+        }
+
+        private AudioDeviceSnapshot ResolveOutputDevice(string? deviceId)
         {
             return string.IsNullOrWhiteSpace(deviceId)
-                ? _devices[_defaultDeviceId]
-                : _devices[deviceId];
+                ? _outputDevices[_defaultOutputDeviceId]
+                : _outputDevices[deviceId];
+        }
+
+        private AudioDeviceSnapshot ResolveInputDevice(string? deviceId)
+        {
+            return string.IsNullOrWhiteSpace(deviceId)
+                ? _inputDevices[_defaultInputDeviceId]
+                : _inputDevices[deviceId];
         }
 
         private static AudioDeviceVolumeSnapshot ToVolumeSnapshot(AudioDeviceSnapshot device)
         {
             return new AudioDeviceVolumeSnapshot(device.Id, device.Name, device.Volume, device.Muted);
+        }
+    }
+
+    private sealed class CapturingAudioCaptureService : IAudioCaptureService
+    {
+        public List<CapturingAudioRecording> Recordings { get; } = [];
+
+        public List<CapturingAudioLevelWatch> LevelWatches { get; } = [];
+
+        public IAudioRecordingSession Record(AudioRecordingOptions options, Action<AudioCaptureEvent> callback)
+        {
+            var recording = new CapturingAudioRecording(options, callback);
+            Recordings.Add(recording);
+            return recording;
+        }
+
+        public IDisposable WatchLevels(AudioLevelWatchOptions options, Action<AudioCaptureEvent> callback)
+        {
+            var watch = new CapturingAudioLevelWatch(options, callback);
+            LevelWatches.Add(watch);
+            return watch;
+        }
+    }
+
+    private sealed class CapturingAudioRecording : IAudioRecordingSession
+    {
+        private readonly Action<AudioCaptureEvent> _callback;
+
+        public CapturingAudioRecording(AudioRecordingOptions options, Action<AudioCaptureEvent> callback)
+        {
+            Options = options;
+            _callback = callback;
+        }
+
+        public AudioRecordingOptions Options { get; }
+
+        public string Path => Options.Path ?? @"C:\Users\Test\AppData\Roaming\HsWin\recordings\recording.wav";
+
+        public bool IsRecording { get; private set; } = true;
+
+        public bool IsDisposed { get; private set; }
+
+        public void Emit(AudioCaptureEvent audioEvent)
+        {
+            _callback(audioEvent);
+        }
+
+        public void Stop()
+        {
+            IsRecording = false;
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
+            Stop();
+        }
+    }
+
+    private sealed class CapturingAudioLevelWatch : IDisposable
+    {
+        private readonly Action<AudioCaptureEvent> _callback;
+
+        public CapturingAudioLevelWatch(AudioLevelWatchOptions options, Action<AudioCaptureEvent> callback)
+        {
+            Options = options;
+            _callback = callback;
+        }
+
+        public AudioLevelWatchOptions Options { get; }
+
+        public bool IsDisposed { get; private set; }
+
+        public void Emit(AudioCaptureEvent audioEvent)
+        {
+            _callback(audioEvent);
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
         }
     }
 

@@ -4,7 +4,8 @@ public sealed record HsWinPaths(
     string AppDirectory,
     string ConfigFilePath,
     string RuntimeLogDirectory,
-    string ConfigLogDirectory)
+    string ConfigLogDirectory,
+    string RecordingDirectory)
 {
     public const string AppDirectoryName = "HsWin";
 
@@ -28,6 +29,7 @@ public sealed record HsWinPaths(
             appDirectory,
             Path.Combine(appDirectory, ConfigFileService.ConfigFileName),
             Path.Combine(appDirectory, "runtime-logs"),
-            Path.Combine(appDirectory, "config-logs"));
+            Path.Combine(appDirectory, "config-logs"),
+            Path.Combine(appDirectory, "recordings"));
     }
 }

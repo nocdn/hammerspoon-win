@@ -142,6 +142,13 @@ public sealed class ConfigFileService
         // hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
         // hs.task.run("git status --short", result => console.log(result.output));
         // console.log(hs.application.runningApplications());
+        // console.log(hs.audiodevice.allInputDevices());
+        // const mic = hs.audiodevice.defaultInputDevice();
+        // console.log("Default mic", mic.name, mic.volume, mic.muted);
+        // const recording = hs.audio.record("C:\\Users\\Public\\Desktop\\clip.wav", event => {
+        //   if (event.type === "stopped") console.log("Recorded", event.path);
+        // });
+        // hs.timer.doAfter(5000, () => recording.stop());
         // console.log(hs.mouse.getCurrentScreen());
         // console.log("Mouse on primary monitor?", hs.mouse.isOnPrimaryScreen());
         // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));

@@ -40,6 +40,20 @@ Object options also accept `icon`/`indicator` and `loading`/`loader`/`spinner`. 
 
 The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window. Toast text uses embedded **SF Pro Text** Regular (see `src/HsWin.App/Assets/Fonts/` and Apple's [SF Pro license](https://developer.apple.com/fonts/)).
 
+### `hs.alert.operation(text, options?)`
+
+Shows one long-running operation toast and returns a handle that can update it through each stage. This is useful for workflows such as recording, uploading, transcribing, and copying text without stacking multiple toasts.
+
+```js
+const toast = hs.alert.operation("Recording");
+
+toast.loading("Uploading");
+toast.loading("Transcribing");
+toast.success("Copied");
+```
+
+Operation toasts show a loading spinner and elapsed timer by default. `update(text, options)` accepts the same options as `hs.alert.show`, plus `elapsed: false` and `resetElapsed: true`. `loading(text, options)` shows a long-lived loading toast without elapsed time unless you pass `elapsed: true`. `success(text, options)` and `error(text, options)` stop the timer and show a final toast. Handles also support `stop()`, `dispose()`, `delete()`, and `hide()`.
+
 ### `console.log`, `console.info`, `console.warn`, `console.error`
 
 Writes to `%APPDATA%\HsWin\config-logs\MM-dd-yyyy-HH-mm.log`. Objects are JSON-serialized; `Error` values use their stack or message.
@@ -106,6 +120,72 @@ const task = hs.task.run("git status --short", {
 
 If you do not need the handle, you can omit `const task =`. Options and result fields are the same as `hs.execute`.
 
+### `hs.http.request(options, callback)`, `hs.http.get/post/put/patch/delete(urlOrOptions, options?, callback)`
+
+Runs an HTTP request on a background thread and calls `callback(result)` when it finishes. Returned handles support `stop()`, `dispose()`, and `delete()`; stopping a request cancels it and suppresses the callback. Config reload cancels outstanding HTTP requests automatically.
+
+```js
+hs.http.get("https://api.example.com/status", {
+  headers: { Authorization: "Bearer token" },
+  query: { verbose: "true" },
+  timeoutMs: 10000
+}, result => {
+  if (result.success) {
+    console.log(result.statusCode, result.body);
+  } else {
+    console.error(result.error || result.status);
+  }
+});
+```
+
+Request options are `url`, `method`, `headers`, `query`/`params`, `body`, `json`, `contentType`, `form`, `multipart`, `files`, `timeoutMs`, and `responseType` (`text`, `json`, or `base64`). `json` is serialized and sent as `application/json`. `form` sends `application/x-www-form-urlencoded`. `multipart` is an array of parts; each part has `name` plus either `value` or `path`, with optional `fileName` and `contentType`. `files` can be a single path, an object such as `{ file: path }`, or an array of file parts.
+
+```js
+hs.http.post("https://api.example.com/transcribe", {
+  headers: { Authorization: `Bearer ${apiKey}` },
+  multipart: [
+    { name: "file", path: "C:\\Users\\me\\Desktop\\clip.wav", fileName: "clip.wav", contentType: "audio/wav" },
+    { name: "model", value: "scribe-v1" }
+  ],
+  timeoutMs: 120000
+}, result => {
+  if (result.success) {
+    hs.pasteboard.setContents(result.json.text);
+  }
+});
+```
+
+HTTP results have `success`, `statusCode`, `status`, `headers`, `body`, `text`, `json`, `timedOut`, and `error`. `json` is populated when the response `Content-Type` looks like JSON and parsing succeeds.
+
+Combined with `hs.audio.record()` and `hs.alert.operation()`, a transcription-style workflow can keep one toast alive through the whole operation:
+
+```js
+const toast = hs.alert.operation("Recording");
+const path = "C:\\Users\\me\\Desktop\\clip.wav";
+
+const recording = hs.audio.record({ path, overwrite: true }, event => {
+  if (event.type !== "stopped") return;
+
+  toast.loading("Uploading");
+  hs.http.post("https://api.example.com/transcribe", {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    multipart: [{ name: "file", path, contentType: "audio/wav" }],
+    timeoutMs: 120000
+  }, result => {
+    if (!result.success) {
+      toast.error(result.error || "Transcription failed");
+      return;
+    }
+
+    toast.loading("Transcribing");
+    hs.pasteboard.setContents(result.json.text);
+    toast.success("Copied");
+  });
+});
+
+hs.timer.doAfter(5000, () => recording.stop());
+```
+
 ### `hs.hotkey.bind(modifiers, key, callback)`
 
 Registers a global hotkey or mouse-button binding. Bindings from a previous config reload are disposed automatically.
@@ -121,6 +201,34 @@ Supported modifiers are `alt`, `option`, `opt`, `ctrl`, `control`, `shift`, `cmd
 `key` is a letter (`A`-`Z`), digit (`0`-`9`), function key (`F1`-`F24`), a named key, or a mouse button. Named keyboard keys include `backspace`, `delete`/`del`, `tab`, `enter`/`return`, `escape`/`esc`, `space`, `pageup`, `pagedown`, `home`, `end`, arrows, `insert`/`ins`, punctuation names (`semicolon`, `comma`, `period`, `slash`, and others), and punctuation literals such as `` ` ``, `-`, `=`, `[`, `]`. Mouse button keys include `mouse.middle`, `mouse.back`, `mouse.forward`, `middle`, `back`, `forward`, `thumb1`, `thumb2`, `xbutton1`, `xbutton2`, `button3`–`button5`, and related `mouse.*` forms.
 
 `bind` returns a registration handle; config reload disposes it automatically. You rarely need to keep the return value.
+
+### `hs.hotkey.bindHeld(modifiers, key, pressedFn, releasedFn, options?)`, `hs.hotkey.whileHeld(...)`
+
+Runs `pressedFn(event)` once when a keyboard hotkey is pressed and `releasedFn(event)` when the key is released or a required modifier is released. This is the ergonomic wrapper for press-and-hold workflows such as recording only while a hotkey is held.
+
+```js
+let recording = null;
+let toast = null;
+const path = "C:\\Users\\me\\Desktop\\dictation.wav";
+
+hs.hotkey.bindHeld(["ctrl", "alt"], "space", () => {
+  toast = hs.alert.operation("Recording");
+  recording = hs.audio.record({ path, overwrite: true }, event => {
+    if (event.type === "stopped") {
+      toast.loading("Uploading");
+      // Upload/transcribe with hs.http.post(...), then copy and toast.success("Copied").
+    }
+  });
+}, () => {
+  if (recording) {
+    const activeRecording = recording;
+    recording = null;
+    activeRecording.stop();
+  }
+});
+```
+
+Held hotkeys support keyboard keys, not mouse buttons. Options are `blocking`/`swallow` (default `true`), `includeInjected` (default `false`), `allowExtraModifiers` (default `false`), and `repeat` (default `false`). Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes them automatically.
 
 If a hotkey, keyboard-watch, or timer callback throws, the runtime shows an error toast instead of crashing the host.
 
@@ -195,9 +303,9 @@ hs.media.nextTrack();
 
 Each call returns `command`, `success`, `action`, `statusBefore`, `statusAfter`, and `backend` (`mediaSession` when a Windows media session handled the command, otherwise `sendInput`). `playPause` actions are `played`, `paused`, `toggled`, or `playPause`; track actions use `previousTrack` and `nextTrack`. Playback status strings are typically `playing`, `paused`, `stopped`, or `unknown`.
 
-### `hs.audiodevice`, `hs.sound`
+### `hs.audiodevice`, `hs.sound`, `hs.audio`
 
-Reads and updates Windows output device volume and mute state. `hs.sound` is a default-output shortcut with `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. `hs.audiodevice` can target a specific output device by id.
+Reads and updates Windows audio endpoint volume and mute state, including microphones. `hs.sound` is a default-output shortcut with `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. `hs.audiodevice` can target a specific output or input device by id.
 
 ```js
 const output = hs.audiodevice.defaultOutputDevice();
@@ -214,7 +322,64 @@ hs.sound.setVolume(20);
 hs.sound.toggleMute();
 ```
 
-Device objects have `id`, `name`, `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. The `set*` and `toggleMute()` methods return a volume snapshot (`id`, `name`, `volume`, `muted`). Module-level `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)` use the default output device when `deviceId` is omitted. Volume is 0–100.
+Device objects have `id`, `name`, `kind` (`output` or `input`), `isDefault`, `volume`, `muted`, plus `getVolume()`, `setVolume(volume)`, `getMuted()`, `setMuted(muted)`, and `toggleMute()`. The `set*` and `toggleMute()` methods return a volume snapshot (`id`, `name`, `volume`, `muted`). Module-level output calls are `hs.audiodevice.getVolume(deviceId?)`, `setVolume(volume, deviceId?)`, `getMuted(deviceId?)`, `setMuted(muted, deviceId?)`, and `toggleMute(deviceId?)`. Module-level input calls are `getInputVolume(deviceId?)`, `setInputVolume(volume, deviceId?)`, `getInputMuted(deviceId?)`, `setInputMuted(muted, deviceId?)`, and `toggleInputMute(deviceId?)`. Volume is 0-100.
+
+```js
+const mic = hs.audiodevice.defaultInputDevice();
+console.log(mic.name, mic.volume, mic.muted);
+
+for (const device of hs.audiodevice.allInputDevices()) {
+  console.log(device.id, device.name, device.isDefault);
+}
+
+mic.setVolume(80);
+mic.setMuted(false);
+```
+
+`hs.audio.record(optionsOrPath?, callback)` records from the default microphone unless `deviceId` is supplied. The callback receives `started`, `level`, `stopped`, and `error` events. Recording handles support `stop()`, `dispose()`, and `delete()`; config reload stops active recordings automatically.
+
+```js
+const recorder = hs.audio.record({
+  path: "C:\\Users\\me\\Desktop\\note.m4a",
+  deviceId: hs.audiodevice.defaultInputDevice().id,
+  quality: "high",
+  levelIntervalMs: 250
+}, event => {
+  if (event.type === "level") {
+    console.log("mic peak", event.peak, "rms", event.rms);
+  }
+
+  if (event.type === "stopped") {
+    hs.alert.show(`Recorded ${event.path}`, { type: "success", durationMs: 2500 });
+  }
+
+  if (event.type === "error") {
+    hs.alert.show(event.message, { type: "error", durationMs: 6000 });
+  }
+});
+
+hs.timer.doAfter(5000, () => recorder.stop());
+```
+
+For quick one-off WAV recording, pass a path string:
+
+```js
+const recording = hs.audio.record("C:\\Users\\me\\Desktop\\clip.wav", event => {
+  if (event.type === "stopped") console.log(event.path, event.durationMs);
+});
+```
+
+Recording options are `path`, `deviceId`, `format` (`wav`, `mp3`, `m4a`, or `aac`), `quality` (`low`, `medium`, or `high`), `bitrateKbps`, `overwrite`, `levelIntervalMs`, and `maxDurationMs`/`durationMs`/`stopAfterMs`. If `path` is omitted, recordings go to `%APPDATA%\HsWin\recordings`. If `overwrite` is false and the target exists, HsWin writes to a numbered sibling path instead of clobbering the old file.
+
+Use `hs.audio.levels(options?, callback)` when you only need microphone level events without writing a file:
+
+```js
+const meter = hs.audio.levels({ intervalMs: 100 }, event => {
+  console.log(event.deviceName, event.peak, event.rms);
+});
+
+hs.timer.doAfter(3000, () => meter.stop());
+```
 
 ### `hs.mouse.getCurrentScreen()`, `hs.mouse.isOnPrimaryScreen()`
 

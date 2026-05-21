@@ -3,6 +3,7 @@ using HsWin.Core.Applications;
 using HsWin.Core.Audio;
 using HsWin.Core.Clipboard;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Http;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Media;
@@ -38,7 +39,11 @@ public sealed record ScriptRuntimeServices
 
     public IAudioDeviceController AudioDevices { get; init; } = NullAudioDeviceController.Instance;
 
+    public IAudioCaptureService AudioCapture { get; init; } = NullAudioCaptureService.Instance;
+
     public IMouseService Mouse { get; init; } = NullMouseService.Instance;
+
+    public IHttpService Http { get; init; } = NullHttpService.Instance;
 
     public IRuntimeLogger Logger { get; init; } = NullRuntimeLogger.Instance;
 }

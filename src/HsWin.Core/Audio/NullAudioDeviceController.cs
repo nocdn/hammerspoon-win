@@ -18,6 +18,16 @@ public sealed class NullAudioDeviceController : IAudioDeviceController
         throw new NotSupportedException("Audio device control is not available in this runtime.");
     }
 
+    public AudioDeviceSnapshot GetDefaultInputDevice()
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
+    public IReadOnlyList<AudioDeviceSnapshot> GetInputDevices()
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
     public AudioDeviceVolumeSnapshot GetVolume(string? deviceId)
     {
         throw new NotSupportedException("Audio device control is not available in this runtime.");
@@ -34,6 +44,26 @@ public sealed class NullAudioDeviceController : IAudioDeviceController
     }
 
     public AudioDeviceVolumeSnapshot ToggleMute(string? deviceId)
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
+    public AudioDeviceVolumeSnapshot GetInputVolume(string? deviceId)
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
+    public AudioDeviceVolumeSnapshot SetInputVolume(string? deviceId, double volume)
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
+    public AudioDeviceVolumeSnapshot SetInputMuted(string? deviceId, bool muted)
+    {
+        throw new NotSupportedException("Audio device control is not available in this runtime.");
+    }
+
+    public AudioDeviceVolumeSnapshot ToggleInputMute(string? deviceId)
     {
         throw new NotSupportedException("Audio device control is not available in this runtime.");
     }

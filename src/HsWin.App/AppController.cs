@@ -1,6 +1,7 @@
 using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
 using HsWin.Core.Config;
+using HsWin.Core.Http;
 using HsWin.Core.Logging;
 using HsWin.Core.Scripting;
 using HsWin.App.Audio;
@@ -34,6 +35,7 @@ internal sealed class AppController : IDisposable
     private readonly NativeClipboardService _clipboardService;
     private readonly ProcessShellService _shellService;
     private readonly NativeAudioDeviceController _audioDeviceController;
+    private readonly NativeAudioCaptureService _audioCaptureService;
     private readonly NativeMouseService _mouseService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
@@ -59,6 +61,7 @@ internal sealed class AppController : IDisposable
         _clipboardService = new NativeClipboardService(WpfApplication.Current.Dispatcher, _logger);
         _shellService = new ProcessShellService(_logger);
         _audioDeviceController = new NativeAudioDeviceController(_logger);
+        _audioCaptureService = new NativeAudioCaptureService(paths.RecordingDirectory, _logger);
         _mouseService = new NativeMouseService();
         _scriptRuntime = new ScriptRuntime(new ScriptRuntimeServices
         {
@@ -74,7 +77,9 @@ internal sealed class AppController : IDisposable
             Clipboard = _clipboardService,
             Shell = _shellService,
             AudioDevices = _audioDeviceController,
+            AudioCapture = _audioCaptureService,
             Mouse = _mouseService,
+            Http = new SystemHttpService(_logger),
             Logger = _logger
         });
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
