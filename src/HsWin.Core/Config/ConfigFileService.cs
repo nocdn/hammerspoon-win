@@ -151,6 +151,7 @@ public sealed class ConfigFileService
         // hs.timer.doAfter(5000, () => recording.stop());
         // console.log(hs.mouse.getCurrentScreen());
         // console.log("Mouse on primary monitor?", hs.mouse.isOnPrimaryScreen());
+        // hs.window.watchFocused(win => win.moveToMouseScreenNative());
         // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
         // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
         // hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));

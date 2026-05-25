@@ -26,6 +26,115 @@
 
   const parseJson = (json) => JSON.parse(json);
 
+  const rectangleCenter = (rectangle) => ({
+    x: rectangle.x + (rectangle.width / 2),
+    y: rectangle.y + (rectangle.height / 2)
+  });
+
+  const containsPoint = (rectangle, point) =>
+    point.x >= rectangle.x
+      && point.x < rectangle.x + rectangle.width
+      && point.y >= rectangle.y
+      && point.y < rectangle.y + rectangle.height;
+
+  const createWindowMoveResult = (windowId, success, moved, reason, frame, extra) => ({
+    windowId,
+    success,
+    moved,
+    reason,
+    frame,
+    ...(extra || {})
+  });
+
+  const createWindow = (windowSnapshot) => {
+    if (!windowSnapshot) {
+      return null;
+    }
+
+    return Object.freeze({
+      ...windowSnapshot,
+
+      refresh() {
+        return createWindow(parseJson(host.Windows.GetWindowJson(windowSnapshot.id)));
+      },
+
+      moveToScreen(screen, options) {
+        return parseJson(host.Windows.MoveToScreenJson(windowSnapshot.id, screen, options));
+      },
+
+      moveToMouseScreen(options) {
+        const screen = hs.mouse.getCurrentScreen();
+        if (!screen) {
+          return {
+            windowId: windowSnapshot.id,
+            success: false,
+            moved: false,
+            reason: "mouse-screen-unavailable",
+            frame: null
+          };
+        }
+
+        return this.moveToScreen(screen, options);
+      },
+
+      moveToScreenNative(screen) {
+        if (!screen) {
+          return createWindowMoveResult(
+            windowSnapshot.id,
+            false,
+            false,
+            "screen-unavailable",
+            null);
+        }
+
+        const frame = windowSnapshot.frame;
+        const windowCenter = rectangleCenter(frame);
+        if (containsPoint(screen.bounds, windowCenter)) {
+          return createWindowMoveResult(
+            windowSnapshot.id,
+            true,
+            false,
+            "already-on-screen",
+            frame);
+        }
+
+        const targetCenter = rectangleCenter(screen.bounds);
+        if (Math.abs(targetCenter.x - windowCenter.x) < 1) {
+          return createWindowMoveResult(
+            windowSnapshot.id,
+            false,
+            false,
+            "target-screen-not-horizontal",
+            frame);
+        }
+
+        const direction = targetCenter.x < windowCenter.x ? "left" : "right";
+        host.Keyboard.Tap(direction, { modifiers: ["win", "shift"] });
+        return createWindowMoveResult(
+          windowSnapshot.id,
+          true,
+          true,
+          "sent-native-monitor-move",
+          null,
+          { direction });
+      },
+
+      moveToMouseScreenNative() {
+        const screen = hs.mouse.getCurrentScreen();
+        if (!screen) {
+          return createWindowMoveResult(
+            windowSnapshot.id,
+            false,
+            false,
+            "mouse-screen-unavailable",
+            null);
+        }
+
+        return this.moveToScreenNative(screen);
+      }
+    });
+  };
+
   const pasteboard = Object.freeze({
     getContents() {
       return host.Clipboard.GetText();
@@ -436,6 +545,64 @@
 
       launch(target, options) {
         return parseJson(host.Applications.LaunchJson(target, options));
+      }
+    }),
+
+    window: Object.freeze({
+      focusedWindow() {
+        return createWindow(parseJson(host.Windows.GetFocusedWindowJson()));
+      },
+
+      get(id) {
+        return createWindow(parseJson(host.Windows.GetWindowJson(id)));
+      },
+
+      watchFocused(callback) {
+        if (typeof callback !== "function") {
+          throw new Error("Window focus callback must be a function.");
+        }
+
+        return host.Windows.WatchFocused(windowJson => callback(createWindow(parseJson(windowJson))));
+      },
+
+      onFocused(callback) {
+        return this.watchFocused(callback);
+      },
+
+      moveFocusedToScreen(screen, options) {
+        const win = this.focusedWindow();
+        if (!win) {
+          return createWindowMoveResult("", false, false, "no-focused-window", null);
+        }
+
+        return win.moveToScreen(screen, options);
+      },
+
+      moveFocusedToScreenNative(screen) {
+        const win = this.focusedWindow();
+        if (!win) {
+          return createWindowMoveResult("", false, false, "no-focused-window", null);
+        }
+
+        return win.moveToScreenNative(screen);
+      },
+
+      moveFocusedToMouseScreen(options) {
+        const screen = hs.mouse.getCurrentScreen();
+        if (!screen) {
+          return createWindowMoveResult("", false, false, "mouse-screen-unavailable", null);
+        }
+
+        return this.moveFocusedToScreen(screen, options);
+      },
+
+      moveFocusedToMouseScreenNative() {
+        const screen = hs.mouse.getCurrentScreen();
+        if (!screen) {
+          return createWindowMoveResult("", false, false, "mouse-screen-unavailable", null);
+        }
+
+        return this.moveFocusedToScreenNative(screen);
       }
     }),
 

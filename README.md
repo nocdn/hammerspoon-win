@@ -288,6 +288,56 @@ hs.application.launch("https://www.hammerspoon.org/");
 
 Options are `cwd`/`workingDirectory`/`directory` and `arguments`/`args`. The result has `target`, `success`, `processId`, and `error`; `processId` can be `null` for shell-handled targets such as URLs.
 
+### `hs.window.focusedWindow()`, `hs.window.get(id)`
+
+Returns the focused window, or looks up a window by id. Window objects expose their snapshot fields and helper methods for moving or refreshing the window.
+
+```js
+const win = hs.window.focusedWindow();
+
+if (win) {
+  console.log(win.id, win.title, win.processName);
+  console.log(win.frame.x, win.frame.y, win.frame.width, win.frame.height);
+}
+```
+
+Window snapshots have `id`, `title`, `processId`, `processName`, `frame`, `isMinimized`, `isMaximized`, and `isVisible`. `frame` uses Windows virtual desktop pixels, so windows and monitors left of or above the primary display can have negative `x`/`y` values.
+
+Window objects support:
+
+```js
+win.refresh();
+win.moveToScreen(hs.mouse.getCurrentScreen());
+win.moveToMouseScreen();
+win.moveToScreenNative(hs.mouse.getCurrentScreen());
+win.moveToMouseScreenNative();
+```
+
+`moveToScreen(screen, options?)` and `moveToMouseScreen(options?)` return `{ windowId, success, moved, reason, frame }`. Options are `preserveSize` (default `true`) and `useWorkingArea`/`workingArea` (default `true`). The move preserves the window's relative position on the source monitor when possible, clamps it into the target monitor's working area, and handles minimized or maximized windows through Windows window placement.
+
+`moveToScreenNative(screen)` and `moveToMouseScreenNative()` use Windows' own `Win+Shift+Left/Right` monitor move shortcut. This is best for focused maximized windows because it lets the Windows shell move them the same way it does for a physical keyboard shortcut. It currently supports horizontally arranged monitors; use `moveToScreen()` as the fallback for non-horizontal layouts.
+
+### `hs.window.watchFocused(callback)`, `hs.window.onFocused(callback)`
+
+Subscribes to foreground-window changes and calls `callback(win)` with a window object. The returned handle supports `stop()`, `dispose()`, and `delete()`; config reload stops active window watches automatically.
+
+This example makes taskbar activation and normal app switching move the focused app window to the display currently under the mouse cursor:
+
+```js
+hs.window.watchFocused(win => {
+  win.moveToMouseScreenNative();
+});
+```
+
+For a one-shot move, use:
+
+```js
+hs.window.moveFocusedToMouseScreen();
+hs.window.moveFocusedToScreen(hs.mouse.getCurrentScreen());
+hs.window.moveFocusedToMouseScreenNative();
+hs.window.moveFocusedToScreenNative(hs.mouse.getCurrentScreen());
+```
+
 ### `hs.media.playPause()`, `hs.media.previousTrack()`, `hs.media.nextTrack()`
 
 Controls the current Windows media session when one is available, otherwise sends the corresponding media key.
@@ -444,6 +494,7 @@ Sends or queries keyboard input. `key` accepts the same keyboard key names as `h
 
 ```js
 hs.keyboard.tap("w");
+hs.keyboard.tap("right", { modifiers: ["win", "shift"] });
 const repeat = hs.keyboard.repeat("w", { intervalMs: 15 });
 repeat.stop();
 hs.keyboard.keyDown("shift");
@@ -454,7 +505,7 @@ if (hs.keyboard.isDown("alt")) {
 }
 ```
 
-`tap` uses `SendInput`, which is the supported Win32 input injection API. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
+`tap` uses `SendInput`, which is the supported Win32 input injection API. Pass `modifiers` / `withModifiers` / `holdModifiers` to hold modifiers while tapping the key. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
 
 ```js
 hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });

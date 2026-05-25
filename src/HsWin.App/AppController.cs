@@ -14,6 +14,7 @@ using HsWin.App.Mouse;
 using HsWin.App.Scripting;
 using HsWin.App.Shell;
 using HsWin.App.Timers;
+using HsWin.App.Windows;
 using System.Diagnostics;
 using System.Reflection;
 using System.Windows.Threading;
@@ -37,6 +38,7 @@ internal sealed class AppController : IDisposable
     private readonly NativeAudioDeviceController _audioDeviceController;
     private readonly NativeAudioCaptureService _audioCaptureService;
     private readonly NativeMouseService _mouseService;
+    private readonly NativeWindowService _windowService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
     private readonly TrayIconService _trayIconService;
@@ -63,6 +65,10 @@ internal sealed class AppController : IDisposable
         _audioDeviceController = new NativeAudioDeviceController(_logger);
         _audioCaptureService = new NativeAudioCaptureService(paths.RecordingDirectory, _logger);
         _mouseService = new NativeMouseService();
+        _dispatcher = WpfApplication.Current.Dispatcher;
+        _windowService = new NativeWindowService(
+            _logger,
+            new WindowHookThreadScheduler(new DispatcherSynchronizationContext(_dispatcher)));
         _scriptRuntime = new ScriptRuntime(new ScriptRuntimeServices
         {
             Alerts = _toastPresenter,
@@ -79,11 +85,11 @@ internal sealed class AppController : IDisposable
             AudioDevices = _audioDeviceController,
             AudioCapture = _audioCaptureService,
             Mouse = _mouseService,
+            Windows = _windowService,
             Http = new SystemHttpService(_logger),
             Logger = _logger
         });
         _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
-        _dispatcher = WpfApplication.Current.Dispatcher;
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,
             reloadConfig: ReloadConfig,
@@ -216,6 +222,8 @@ internal sealed class AppController : IDisposable
         _logger.Info("Hotkey service disposed.");
         _keyboardEventService.Dispose();
         _logger.Info("Keyboard event service disposed.");
+        _windowService.Dispose();
+        _logger.Info("Window service disposed.");
         _toastPresenter.Dispose();
         _logger.Info("Toast presenter disposed.");
         _singleInstanceGuard.Dispose();

@@ -51,6 +51,17 @@ public sealed class KeyboardScriptOptionsParserTests
             new Dictionary<string, object?> { ["suppressPhysicalModifiers"] = new[] { "alt", "shift" } });
 
         Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, options.SuppressPhysicalModifiers);
+        Assert.Equal(HotkeyModifiers.None, options.Modifiers);
+    }
+
+    [Fact]
+    public void ParseTapOptionsReadsModifiers()
+    {
+        var options = KeyboardScriptOptionsParser.ParseTapOptions(
+            new Dictionary<string, object?> { ["modifiers"] = new[] { "win", "shift" } });
+
+        Assert.Equal(HotkeyModifiers.None, options.SuppressPhysicalModifiers);
+        Assert.Equal(HotkeyModifiers.Win | HotkeyModifiers.Shift, options.Modifiers);
     }
 
     [Fact]

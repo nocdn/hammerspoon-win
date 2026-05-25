@@ -22,6 +22,12 @@ public sealed class HsScriptHost
             callbacks,
             trackResource);
         Mouse = new MouseScriptApi(services.Mouse, services.Logger);
+        Windows = new WindowScriptApi(
+            services.Windows,
+            services.Logger,
+            services.CallbackScheduler,
+            callbacks,
+            trackResource);
         Http = new HttpScriptApi(
             services.Http,
             services.Logger,
@@ -61,6 +67,8 @@ public sealed class HsScriptHost
     public AudioCaptureScriptApi AudioCapture { get; }
 
     public MouseScriptApi Mouse { get; }
+
+    public WindowScriptApi Windows { get; }
 
     public HttpScriptApi Http { get; }
 

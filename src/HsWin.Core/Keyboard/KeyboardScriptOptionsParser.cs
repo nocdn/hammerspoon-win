@@ -36,11 +36,19 @@ public static class KeyboardScriptOptionsParser
             "suppressPhysicalModifiers",
             "suppressModifiers",
             "withoutModifiers");
+        var modifiersValue = ScriptArgumentReader.GetPropertyValue(
+            value,
+            "modifiers",
+            "withModifiers",
+            "holdModifiers");
 
         return new KeyboardTapOptions(
             ScriptArgumentReader.IsMissing(suppressValue)
                 ? KeyboardTapOptions.Default.SuppressPhysicalModifiers
-                : HotkeyParser.ParseModifiers(suppressValue));
+                : HotkeyParser.ParseModifiers(suppressValue),
+            ScriptArgumentReader.IsMissing(modifiersValue)
+                ? KeyboardTapOptions.Default.Modifiers
+                : HotkeyParser.ParseModifiers(modifiersValue));
     }
 
     public static KeyboardRepeatOptions ParseRepeatOptions(object? value)

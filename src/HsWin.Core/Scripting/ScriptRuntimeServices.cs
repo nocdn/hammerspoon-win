@@ -10,6 +10,7 @@ using HsWin.Core.Media;
 using HsWin.Core.Mouse;
 using HsWin.Core.Shell;
 using HsWin.Core.Timers;
+using HsWin.Core.Windows;
 
 namespace HsWin.Core.Scripting;
 
@@ -44,6 +45,8 @@ public sealed record ScriptRuntimeServices
     public IMouseService Mouse { get; init; } = NullMouseService.Instance;
 
     public IHttpService Http { get; init; } = NullHttpService.Instance;
+
+    public IWindowService Windows { get; init; } = NullWindowService.Instance;
 
     public IRuntimeLogger Logger { get; init; } = NullRuntimeLogger.Instance;
 }

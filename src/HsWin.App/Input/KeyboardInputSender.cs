@@ -35,9 +35,10 @@ internal static partial class KeyboardInputSender
     internal static void SendTap(
         uint virtualKey,
         IReadOnlyList<uint>? suppressedModifierVirtualKeys = null,
+        IReadOnlyList<uint>? modifierVirtualKeys = null,
         IRuntimeLogger? logger = null)
     {
-        Span<Input> inputs = stackalloc Input[10];
+        Span<Input> inputs = stackalloc Input[24];
         var inputCount = 0;
         if (suppressedModifierVirtualKeys is not null)
         {
@@ -47,8 +48,24 @@ internal static partial class KeyboardInputSender
             }
         }
 
+        if (modifierVirtualKeys is not null)
+        {
+            foreach (var modifierVirtualKey in modifierVirtualKeys)
+            {
+                inputs[inputCount++] = CreateKeyboardInput(modifierVirtualKey, keyUp: false);
+            }
+        }
+
         inputs[inputCount++] = CreateKeyboardInput(virtualKey, keyUp: false);
         inputs[inputCount++] = CreateKeyboardInput(virtualKey, keyUp: true);
+
+        if (modifierVirtualKeys is not null)
+        {
+            foreach (var modifierVirtualKey in modifierVirtualKeys.Reverse())
+            {
+                inputs[inputCount++] = CreateKeyboardInput(modifierVirtualKey, keyUp: true);
+            }
+        }
 
         if (suppressedModifierVirtualKeys is not null)
         {
@@ -64,7 +81,7 @@ internal static partial class KeyboardInputSender
         }
         catch
         {
-            RestoreAfterFailedTap(virtualKey, suppressedModifierVirtualKeys, logger);
+            RestoreAfterFailedTap(virtualKey, suppressedModifierVirtualKeys, modifierVirtualKeys, logger);
             throw;
         }
     }
@@ -72,11 +89,20 @@ internal static partial class KeyboardInputSender
     private static unsafe void RestoreAfterFailedTap(
         uint virtualKey,
         IReadOnlyList<uint>? suppressedModifierVirtualKeys,
+        IReadOnlyList<uint>? modifierVirtualKeys,
         IRuntimeLogger? logger)
     {
-        Span<Input> inputs = stackalloc Input[5];
+        Span<Input> inputs = stackalloc Input[9];
         var inputCount = 0;
         inputs[inputCount++] = CreateKeyboardInput(virtualKey, keyUp: true);
+
+        if (modifierVirtualKeys is not null)
+        {
+            foreach (var modifierVirtualKey in modifierVirtualKeys.Reverse())
+            {
+                inputs[inputCount++] = CreateKeyboardInput(modifierVirtualKey, keyUp: true);
+            }
+        }
 
         if (suppressedModifierVirtualKeys is not null)
         {

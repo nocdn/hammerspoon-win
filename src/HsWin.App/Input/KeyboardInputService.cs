@@ -36,7 +36,8 @@ internal sealed partial class KeyboardInputService : IKeyboardInputService
         ArgumentNullException.ThrowIfNull(options);
 
         var suppressedModifiers = GetCurrentlyDownModifiers(options.SuppressPhysicalModifiers);
-        KeyboardInputSender.SendTap(virtualKey, suppressedModifiers, _logger);
+        var modifiers = KeyboardKeyRules.GetModifierVirtualKeys(options.Modifiers);
+        KeyboardInputSender.SendTap(virtualKey, suppressedModifiers, modifiers, _logger);
     }
 
     public IDisposable Repeat(uint virtualKey, KeyboardRepeatOptions options)
@@ -148,7 +149,7 @@ internal sealed partial class KeyboardInputService : IKeyboardInputService
             _logger.Info(
                 $"Keyboard repeat started vk=0x{_virtualKey:X2} intervalMs={_options.IntervalMs} suppressModifiers=0x{(uint)_options.SuppressPhysicalModifiers:X}.");
             ReleaseSuppressedModifiers();
-            KeyboardInputSender.SendTap(_virtualKey, logger: _logger);
+                KeyboardInputSender.SendTap(_virtualKey, logger: _logger);
             _tickCount++;
             _timer.Change(_options.IntervalMs, _options.IntervalMs);
         }
