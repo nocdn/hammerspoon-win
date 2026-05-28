@@ -11,6 +11,8 @@
   - `HsWin.App.Tests` covers WPF-side constants and app-layer behavior that can be tested without fragile screenshots.
 - Prefer small composable services over large app-wide classes.
 - Keep the JavaScript API Hammerspoon-like where it makes sense, using the `hs` global.
+- Prioritize a friendly, obvious JavaScript scripting experience. Users should not need timing hacks, Windows-hook knowledge, or defensive workarounds in their config scripts; handle fallbacks, edge cases, retries, and platform quirks inside the host wherever practical, and cover those behaviors with substantial focused tests.
+- Keep low-level input hooks off the WPF/UI dispatcher. Keyboard and mouse hooks should run on dedicated message-pump threads so startup UI work, toasts, timers, or script callbacks cannot delay physical input delivery.
 - Runtime diagnostics live under `%APPDATA%\HsWin\runtime-logs`; JavaScript `console.*` output lives under `%APPDATA%\HsWin\config-logs`.
 - **After every code change**, before handing work back, run this full verification loop (do not skip steps):
   1. **Kill** any running `Hammerspoon (Windows Edition)` or `HsWin.App` instances so the old build is not left running.

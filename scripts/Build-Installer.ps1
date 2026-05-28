@@ -2,7 +2,7 @@
 param(
     [string] $Configuration = "Release",
     [string] $RuntimeIdentifier = "win-x64",
-    [string] $Version = "0.1.0",
+    [string] $Version = "",
     [string] $VersionInfoVersion = ""
 )
 
@@ -16,6 +16,11 @@ $installerScriptPath = Join-Path $repoRoot "installer\HsWin.iss"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $publishDir = Join-Path $artifactsRoot "publish\HsWin.App\$Configuration\$RuntimeIdentifier"
 $installerOutputDir = Join-Path $artifactsRoot "installer"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $now = [System.DateTimeOffset]::Now
+    $Version = "0.{0:MMdd}.{0:HHmm}.{0:ss}" -f $now
+}
 
 if ([string]::IsNullOrWhiteSpace($VersionInfoVersion)) {
     if ($Version -match '^\d+$') {

@@ -20,7 +20,6 @@ internal sealed class KeyboardWatchDispatcher
         KeyboardEventSnapshot snapshot,
         IReadOnlyList<KeyboardWatchSubscription> subscriptions)
     {
-        var shouldSwallow = false;
         foreach (var subscription in subscriptions)
         {
             if (ShouldSkip(subscription, snapshot))
@@ -30,26 +29,40 @@ internal sealed class KeyboardWatchDispatcher
 
             if (subscription.Options.Blocking)
             {
-                shouldSwallow |= InvokeBlocking(subscription, snapshot);
+                if (InvokeBlocking(subscription, snapshot))
+                {
+                    return true;
+                }
+
                 continue;
             }
 
             ScheduleNonBlocking(subscription, snapshot);
         }
 
-        return shouldSwallow;
+        return false;
     }
 
     private static bool ShouldSkip(KeyboardWatchSubscription subscription, KeyboardEventSnapshot snapshot)
     {
-        return subscription.IsDisposed || (snapshot.IsInjected && !subscription.Options.IncludeInjected);
+        return subscription.IsDisposed
+            || (snapshot.IsInjected && !subscription.Options.IncludeInjected)
+            || (subscription.Options.KeyFilter is { Count: > 0 } && !subscription.Options.KeyFilter.Contains(snapshot.KeyCode));
     }
 
     private bool InvokeBlocking(KeyboardWatchSubscription subscription, KeyboardEventSnapshot snapshot)
     {
         try
         {
-            return subscription.Callback(snapshot);
+            var shouldSwallow = subscription.Callback(snapshot);
+            if (shouldSwallow)
+            {
+                _logger.Info(
+                    $"Keyboard watch requested swallow id={subscription.Id} key='{snapshot.Key}' type='{snapshot.Type}' " +
+                    $"vk=0x{snapshot.KeyCode:X2} modifiers='{string.Join(",", snapshot.Modifiers)}'.");
+            }
+
+            return shouldSwallow;
         }
         catch (Exception exception)
         {

@@ -45,6 +45,28 @@ public sealed class KeyboardScriptOptionsParserTests
     }
 
     [Fact]
+    public void ParseWatchOptionsReadsSingleKeyFilter()
+    {
+        var options = KeyboardScriptOptionsParser.ParseWatchOptions(
+            new Dictionary<string, object?> { ["key"] = "pageup" });
+
+        Assert.NotNull(options.KeyFilter);
+        Assert.Contains(0x21u, options.KeyFilter);
+    }
+
+    [Fact]
+    public void ParseWatchOptionsReadsMultipleKeyFilters()
+    {
+        var options = KeyboardScriptOptionsParser.ParseWatchOptions(
+            new Dictionary<string, object?> { ["keys"] = new object[] { "pageup", "pagedown", 0xC0 } });
+
+        Assert.NotNull(options.KeyFilter);
+        Assert.Contains(0x21u, options.KeyFilter);
+        Assert.Contains(0x22u, options.KeyFilter);
+        Assert.Contains(0xC0u, options.KeyFilter);
+    }
+
+    [Fact]
     public void ParseTapOptionsReadsSuppressedModifiers()
     {
         var options = KeyboardScriptOptionsParser.ParseTapOptions(

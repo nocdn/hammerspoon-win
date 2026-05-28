@@ -9,6 +9,7 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
 {
     private readonly string _logFilePath;
     private readonly BlockingCollection<LogEntry> _entries = [];
+    private readonly object _fallbackGate = new();
     private readonly Thread _worker;
     private int _disposed;
 
@@ -22,6 +23,7 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
             IsBackground = true,
             Name = "HsWin Runtime Logger"
         };
+        WriteFallback(new LogEntry(DateTimeOffset.Now, "INFO", "Runtime logger initialized.", null));
         _worker.Start();
     }
 
@@ -60,6 +62,7 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
         }
         catch
         {
+            WriteFallback(new LogEntry(DateTimeOffset.Now, "ERROR", "Runtime logger queue write failed.", null));
             // Logging must never break the tray app or script reload loop.
         }
     }
@@ -122,6 +125,29 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
                     WriteEntry(writer, nextEntry);
                 }
 
+                writer.Flush();
+            }
+        }
+        catch (Exception exception)
+        {
+            WriteFallback(new LogEntry(DateTimeOffset.Now, "ERROR", "Runtime logger worker failed.", exception));
+            // Logging must never break the tray app or script reload loop.
+        }
+    }
+
+    private void WriteFallback(LogEntry entry)
+    {
+        try
+        {
+            lock (_fallbackGate)
+            {
+                using var stream = new FileStream(
+                    _logFilePath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite);
+                using var writer = new StreamWriter(stream);
+                WriteEntry(writer, entry);
                 writer.Flush();
             }
         }

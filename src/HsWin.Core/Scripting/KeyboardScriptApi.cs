@@ -58,8 +58,55 @@ public sealed class KeyboardScriptApi
 
         var handle = new ScriptResourceHandle(registration);
         _trackResource(handle);
-        _logger.Info($"Script hs.keyboard.watch() registered includeInjected={parsedOptions.IncludeInjected} blocking={parsedOptions.Blocking}.");
+        _logger.Info(
+            $"Script hs.keyboard.watch() registered includeInjected={parsedOptions.IncludeInjected} blocking={parsedOptions.Blocking} " +
+            $"keys={FormatKeyFilter(parsedOptions.KeyFilter)}.");
         return handle;
+    }
+
+    public ScriptResourceHandle Remap(object? sourceKey, object? targetKey)
+    {
+        var sourceVirtualKey = HotkeyParser.ParseVirtualKey(sourceKey);
+        var targetVirtualKey = HotkeyParser.ParseVirtualKey(targetKey);
+        var sourceName = KeyboardKeyRules.GetDisplayName(sourceVirtualKey);
+        var targetName = KeyboardKeyRules.GetDisplayName(targetVirtualKey);
+
+        var registration = _keyboardEvents.Watch(
+            new KeyboardEventWatchOptions(
+                IncludeInjected: false,
+                Blocking: true,
+                KeyFilter: new HashSet<uint> { sourceVirtualKey },
+                Prepend: true),
+            keyboardEvent =>
+            {
+                if (keyboardEvent.KeyCode != sourceVirtualKey)
+                {
+                    return false;
+                }
+
+                _logger.Info(
+                    $"Keyboard remap matched source='{sourceName}' target='{targetName}' type='{keyboardEvent.Type}' " +
+                    $"sourceVk=0x{sourceVirtualKey:X2} targetVk=0x{targetVirtualKey:X2}.");
+                if (keyboardEvent.IsKeyDown)
+                {
+                    _keyboardInput.Tap(targetVirtualKey, KeyboardTapOptions.Default);
+                }
+
+                return true;
+            });
+
+        var handle = new ScriptResourceHandle(registration);
+        _trackResource(handle);
+        _logger.Info(
+            $"Script hs.keyboard.remap('{sourceName}', '{targetName}') registered sourceVk=0x{sourceVirtualKey:X2} targetVk=0x{targetVirtualKey:X2}.");
+        return handle;
+    }
+
+    private static string FormatKeyFilter(IReadOnlySet<uint>? keyFilter)
+    {
+        return keyFilter is { Count: > 0 }
+            ? string.Join(",", keyFilter.Select(key => $"0x{key:X2}"))
+            : "<all>";
     }
 
     public void Tap(object? key, object? options = null)

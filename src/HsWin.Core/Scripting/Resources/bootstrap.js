@@ -644,6 +644,10 @@
         return host.Keyboard.Watch((eventJson) => callback(parseJson(eventJson)) === true, options);
       },
 
+      remap(sourceKey, targetKey) {
+        return host.Keyboard.Remap(sourceKey, targetKey);
+      },
+
       tap(key, options) {
         host.Keyboard.Tap(key, options);
       },

@@ -17,9 +17,11 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private const int WmKeyUp = 0x0101;
     private const int WmSysKeyDown = 0x0104;
     private const int WmSysKeyUp = 0x0105;
+    private const int WmQuit = 0x0012;
     private const uint LlkhfInjected = 0x10;
     private const uint LlkhfUp = 0x80;
     private const short KeyPressedMask = unchecked((short)0x8000);
+    private static readonly TimeSpan HookInstallTimeout = TimeSpan.FromSeconds(5);
 
     private readonly object _gate = new();
     private readonly IRuntimeLogger _logger;
@@ -29,6 +31,9 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private readonly List<KeyboardWatchSubscription> _subscriptions = [];
 
     private IntPtr _hookHandle;
+    private Thread? _hookThread;
+    private uint _hookThreadId;
+    private Exception? _hookInstallException;
     private bool _disposed;
     private long _nextSubscriptionId;
 
@@ -63,9 +68,18 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
                 options,
                 callback,
                 RemoveSubscription);
-            _subscriptions.Add(subscription);
+            if (options.Prepend)
+            {
+                _subscriptions.Insert(0, subscription);
+            }
+            else
+            {
+                _subscriptions.Add(subscription);
+            }
+
             _logger.Info(
-                $"Keyboard watch registered id={subscription.Id} includeInjected={options.IncludeInjected} blocking={options.Blocking} count={_subscriptions.Count}.");
+                $"Keyboard watch registered id={subscription.Id} includeInjected={options.IncludeInjected} blocking={options.Blocking} " +
+                $"prepend={options.Prepend} keys={FormatKeyFilter(options.KeyFilter)} count={_subscriptions.Count}.");
             return subscription;
         }
     }
@@ -126,7 +140,12 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             subscriptions = [.. _subscriptions];
         }
 
-        var shouldSwallow = _watchDispatcher.Dispatch(snapshot, subscriptions);
+        bool shouldSwallow;
+        using (KeyboardHookDispatchScope.Enter(_logger, FormatKeyboardEvent(snapshot, hookData, message)))
+        {
+            shouldSwallow = _watchDispatcher.Dispatch(snapshot, subscriptions);
+            LogKeyboardEventDispatch(snapshot, hookData, message, shouldSwallow);
+        }
 
         return shouldSwallow
             ? new IntPtr(1)
@@ -174,25 +193,70 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             return;
         }
 
-        _hookHandle = User32.SetWindowsHookEx(WhKeyboardLl, _hookProcedure, Kernel32.GetModuleHandle(null), 0);
-        if (_hookHandle == IntPtr.Zero)
+        _hookInstallException = null;
+        using var ready = new ManualResetEventSlim();
+        _hookThread = new Thread(() => HookThreadMain(ready))
         {
-            var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not install WH_KEYBOARD_LL hook.");
-            _logger.Error("Low-level keyboard hook installation failed.", exception);
+            IsBackground = true,
+            Name = "HsWin Keyboard Hook"
+        };
+        _hookThread.SetApartmentState(ApartmentState.STA);
+        _hookThread.Start();
+
+        if (!ready.Wait(HookInstallTimeout))
+        {
+            var exception = new TimeoutException($"Timed out after {HookInstallTimeout.TotalMilliseconds:F0}ms while installing WH_KEYBOARD_LL hook.");
+            _logger.Error("Low-level keyboard hook installation timed out.", exception);
             throw exception;
         }
 
-        _logger.Info($"WH_KEYBOARD_LL hook installed. Hook=0x{_hookHandle.ToInt64():X}");
+        if (_hookInstallException is not null)
+        {
+            throw _hookInstallException;
+        }
+
+        if (_hookHandle == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("WH_KEYBOARD_LL hook thread started without publishing a hook handle.");
+        }
+    }
+
+    private void HookThreadMain(ManualResetEventSlim ready)
+    {
+        _hookThreadId = Kernel32.GetCurrentThreadId();
+
+        var hookHandle = User32.SetWindowsHookEx(WhKeyboardLl, _hookProcedure, Kernel32.GetModuleHandle(null), 0);
+        if (hookHandle == IntPtr.Zero)
+        {
+            var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not install WH_KEYBOARD_LL hook.");
+            _hookInstallException = exception;
+            _logger.Error("Low-level keyboard hook installation failed.", exception);
+            ready.Set();
+            return;
+        }
+
+        _hookHandle = hookHandle;
+        _logger.Info($"WH_KEYBOARD_LL hook installed. Hook=0x{hookHandle.ToInt64():X} threadId={_hookThreadId}.");
+        ready.Set();
+
+        while (User32.GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+        {
+            User32.TranslateMessage(ref message);
+            User32.DispatchMessage(ref message);
+        }
+
+        _logger.Info($"Keyboard hook thread exited threadId={_hookThreadId}.");
     }
 
     private void UninstallHook()
     {
-        if (_hookHandle == IntPtr.Zero)
+        var hookHandle = _hookHandle;
+        if (hookHandle == IntPtr.Zero)
         {
             return;
         }
 
-        if (User32.UnhookWindowsHookEx(_hookHandle))
+        if (User32.UnhookWindowsHookEx(hookHandle))
         {
             _logger.Info("WH_KEYBOARD_LL hook uninstalled.");
         }
@@ -203,6 +267,17 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         }
 
         _hookHandle = IntPtr.Zero;
+        if (_hookThreadId != 0)
+        {
+            if (!User32.PostThreadMessage(_hookThreadId, WmQuit, IntPtr.Zero, IntPtr.Zero))
+            {
+                var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not stop the keyboard hook thread.");
+                _logger.Error("Keyboard hook thread stop signal failed.", exception);
+            }
+        }
+
+        _hookThreadId = 0;
+        _hookThread = null;
     }
 
     private static bool IsKeyUpMessage(int message, uint flags)
@@ -214,6 +289,45 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     {
         return (hookData.Flags & LlkhfInjected) != 0
             || hookData.ExtraInfo == HsWin.App.Input.KeyboardInputSender.InjectedExtraInfo;
+    }
+
+    private void LogKeyboardEventDispatch(
+        KeyboardEventSnapshot snapshot,
+        KeyboardHookStruct hookData,
+        int message,
+        bool shouldSwallow)
+    {
+        if (!shouldSwallow && !IsNavigationDiagnosticKey(snapshot.KeyCode))
+        {
+            return;
+        }
+
+        _logger.Info(
+            $"Keyboard event key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} scan=0x{hookData.ScanCode:X2} " +
+            $"flags=0x{hookData.Flags:X2} message=0x{message:X4} injected={snapshot.IsInjected} extended={snapshot.IsExtended} " +
+            $"swallow={shouldSwallow} deferredActions={KeyboardHookDispatchScope.CurrentDeferredActionCount}.");
+    }
+
+    private static bool IsNavigationDiagnosticKey(uint virtualKey)
+    {
+        return virtualKey is 0x21 or 0x22 or 0x23 or 0x24;
+    }
+
+    private static string FormatKeyFilter(IReadOnlySet<uint>? keyFilter)
+    {
+        return keyFilter is { Count: > 0 }
+            ? string.Join(",", keyFilter.Select(key => $"0x{key:X2}"))
+            : "<all>";
+    }
+
+    private static string FormatKeyboardEvent(
+        KeyboardEventSnapshot snapshot,
+        KeyboardHookStruct hookData,
+        int message)
+    {
+        return
+            $"key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} scan=0x{hookData.ScanCode:X2} " +
+            $"flags=0x{hookData.Flags:X2} message=0x{message:X4} injected={snapshot.IsInjected} extended={snapshot.IsExtended}";
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -246,11 +360,52 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
 
         [LibraryImport("user32.dll")]
         public static partial short GetAsyncKeyState(int virtualKey);
+
+        [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
+        public static partial int GetMessage(out NativeMessage message, IntPtr windowHandle, uint messageFilterMin, uint messageFilterMax);
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool TranslateMessage(ref NativeMessage message);
+
+        [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
+        public static partial IntPtr DispatchMessage(ref NativeMessage message);
+
+        [LibraryImport("user32.dll", EntryPoint = "PostThreadMessageW", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool PostThreadMessage(uint threadId, int message, IntPtr wParam, IntPtr lParam);
     }
 
     private static partial class Kernel32
     {
         [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
         public static partial IntPtr GetModuleHandle(string? moduleName);
+
+        [LibraryImport("kernel32.dll")]
+        public static partial uint GetCurrentThreadId();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMessage
+    {
+        public IntPtr Hwnd;
+
+        public uint Message;
+
+        public IntPtr WParam;
+
+        public IntPtr LParam;
+
+        public uint Time;
+
+        public NativePoint Point;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+
+        public int Y;
     }
 }

@@ -76,4 +76,24 @@ public sealed class PreviousInstanceProcessMatcherTests
 
         Assert.True(result);
     }
+
+    [Fact]
+    public void ShouldReadExecutablePathSkipsUnrelatedProcessNames()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldReadExecutablePath(
+            "explorer",
+            @"C:\Program Files\HsWin\Hammerspoon (Windows Edition).exe");
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShouldReadExecutablePathMatchesCurrentExecutableProcessName()
+    {
+        var result = PreviousInstanceProcessMatcher.ShouldReadExecutablePath(
+            "Hammerspoon (Windows Edition)",
+            @"C:\Program Files\HsWin\Hammerspoon (Windows Edition).exe");
+
+        Assert.True(result);
+    }
 }

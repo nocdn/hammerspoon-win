@@ -13,12 +13,14 @@ internal static class PreviousInstanceCleaner
     {
         ArgumentNullException.ThrowIfNull(logger);
 
+        var startedAt = Stopwatch.GetTimestamp();
         using var currentProcess = Process.GetCurrentProcess();
         var currentProcessId = currentProcess.Id;
         var currentSessionId = TryGetSessionId(currentProcess);
         var currentExecutablePath = TryGetExecutablePath(currentProcess);
 
         var inspected = 0;
+        var pathChecks = 0;
         var matched = 0;
         var stopped = 0;
         var failed = 0;
@@ -37,19 +39,36 @@ internal static class PreviousInstanceCleaner
 
                 var processName = TryGetProcessName(process);
                 var sessionId = TryGetSessionId(process);
-                var executablePath = TryGetExecutablePath(process);
-                if (!PreviousInstanceProcessMatcher.ShouldTerminate(
+                var shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
                     processId,
                     currentProcessId,
                     processName,
                     sessionId,
                     currentSessionId,
-                    executablePath,
-                    currentExecutablePath))
+                    candidateExecutablePath: null,
+                    currentExecutablePath);
+
+                string? executablePath = null;
+                if (!shouldTerminate && PreviousInstanceProcessMatcher.ShouldReadExecutablePath(processName, currentExecutablePath))
+                {
+                    pathChecks++;
+                    executablePath = TryGetExecutablePath(process);
+                    shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
+                        processId,
+                        currentProcessId,
+                        processName,
+                        sessionId,
+                        currentSessionId,
+                        executablePath,
+                        currentExecutablePath);
+                }
+
+                if (!shouldTerminate)
                 {
                     continue;
                 }
 
+                executablePath ??= TryGetExecutablePath(process);
                 matched++;
                 if (Terminate(process, processName, processId, executablePath, logger))
                 {
@@ -63,7 +82,8 @@ internal static class PreviousInstanceCleaner
         }
 
         logger.Info(
-            $"Previous instance cleanup completed inspected={inspected} matched={matched} stopped={stopped} failed={failed}.");
+            $"Previous instance cleanup completed inspected={inspected} pathChecks={pathChecks} matched={matched} stopped={stopped} failed={failed} " +
+            $"elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
     }
 
     private static bool Terminate(
@@ -174,6 +194,17 @@ internal static class PreviousInstanceProcessMatcher
         }
 
         return PathsEqual(candidateExecutablePath, currentExecutablePath);
+    }
+
+    public static bool ShouldReadExecutablePath(string candidateProcessName, string? currentExecutablePath)
+    {
+        if (string.IsNullOrWhiteSpace(candidateProcessName) || string.IsNullOrWhiteSpace(currentExecutablePath))
+        {
+            return false;
+        }
+
+        var currentProcessName = Path.GetFileNameWithoutExtension(currentExecutablePath);
+        return string.Equals(candidateProcessName, currentProcessName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool PathsEqual(string? first, string? second)

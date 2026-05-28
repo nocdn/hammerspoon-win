@@ -23,6 +23,17 @@ public sealed class FileLoggerTests
     }
 
     [Fact]
+    public void CreateForLaunchWritesInitializationLineImmediately()
+    {
+        using var directory = TemporaryDirectory.Create();
+        using var logger = FileLogger.CreateForLaunch(directory.Path);
+
+        var contents = File.ReadAllText(logger.LogFilePath);
+
+        Assert.Contains("[INFO] Runtime logger initialized.", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WritesFromMultipleThreadsAreFlushed()
     {
         using var directory = TemporaryDirectory.Create();

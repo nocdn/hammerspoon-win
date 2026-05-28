@@ -1257,6 +1257,73 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesKeyboardRemapWithoutScriptCallbackOnHookPath()
+    {
+        var keyboardEvents = new CapturingKeyboardEventService();
+        var keyboardInput = new CapturingKeyboardInputService();
+        var logger = new CapturingRuntimeLogger();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            KeyboardEvents = keyboardEvents,
+            KeyboardInput = keyboardInput,
+            Logger = logger
+        });
+
+        runtime.Reload("""hs.keyboard.remap("pageup", "end");""");
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.True(watch.Options.Blocking);
+        Assert.False(watch.Options.IncludeInjected);
+        Assert.True(watch.Options.Prepend);
+        Assert.NotNull(watch.Options.KeyFilter);
+        Assert.Contains(0x21u, watch.Options.KeyFilter);
+
+        var ignored = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x22,
+            "pagedown",
+            [],
+            0,
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: true));
+        Assert.False(ignored);
+        Assert.Empty(keyboardInput.Taps);
+
+        var swallowedDown = watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x21,
+            "pageup",
+            [],
+            0,
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: true));
+        var swallowedUp = watch.Callback(new KeyboardEventSnapshot(
+            "keyup",
+            0x21,
+            "pageup",
+            [],
+            0,
+            IsKeyDown: false,
+            IsKeyUp: true,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: true));
+
+        Assert.True(swallowedDown);
+        Assert.True(swallowedUp);
+        var tap = Assert.Single(keyboardInput.Taps);
+        Assert.Equal(0x23u, tap.VirtualKey);
+        Assert.Contains(logger.Infos, info => info.Contains("hs.keyboard.remap('pageup', 'end')", StringComparison.Ordinal));
+        Assert.Contains(logger.Infos, info => info.Contains("Keyboard remap matched source='pageup'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ReloadExposesKeyboardTapModifiers()
     {
         var keyboardInput = new CapturingKeyboardInputService();
@@ -1374,6 +1441,31 @@ public sealed class ScriptRuntimeTests
         var options = Assert.Single(keyboardEvents.Watches).Options;
         Assert.True(options.IncludeInjected);
         Assert.True(options.Blocking);
+    }
+
+    [Fact]
+    public void KeyboardWatchParsesKeyFiltersFromJavaScript()
+    {
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(
+            new CapturingAlertPresenter(),
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            keyboardEvents,
+            NullKeyboardInputService.Instance,
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        runtime.Reload("""hs.keyboard.watch(() => false, { blocking: true, keys: ["pageup", "pagedown", 0xC0] });""");
+
+        var options = Assert.Single(keyboardEvents.Watches).Options;
+        Assert.True(options.Blocking);
+        Assert.NotNull(options.KeyFilter);
+        Assert.Contains(0x21u, options.KeyFilter);
+        Assert.Contains(0x22u, options.KeyFilter);
+        Assert.Contains(0xC0u, options.KeyFilter);
     }
 
     [Fact]

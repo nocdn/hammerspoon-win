@@ -455,7 +455,7 @@ Screen snapshots have `id`, `name`, `isPrimary`, `mousePosition`, `bounds`, and 
 
 Subscribes to global keyboard events. Watchers are non-blocking by default: callbacks run off the Windows keyboard hook path, so they can observe input without delaying keystrokes. Non-blocking callbacks cannot swallow input; returning `true` is ignored and logged as a warning.
 
-Use `{ blocking: true }` only for watchers that must return `true` to swallow the physical event so the active app does not receive it. Blocking watchers run on the keyboard hook path, so keep their callbacks tiny and move slow work to `hs.timer.doAfter`, `hs.task.run`, or a normal hotkey callback.
+Use `{ blocking: true }` only for watchers that must return `true` to swallow the physical event so the active app does not receive it. Blocking watchers run on the keyboard hook path, so keep slow work in `hs.timer.doAfter`, `hs.task.run`, or a normal hotkey callback. For simple key-to-key remaps, prefer `hs.keyboard.remap(fromKey, toKey)` so the hook path stays native and fast.
 
 ```js
 const watcher = hs.keyboard.watch(event => {
@@ -471,8 +471,13 @@ const blocker = hs.keyboard.watch(event => {
   return false;
 }, { blocking: true });
 
+const pageWatcher = hs.keyboard.watch(event => {
+  console.log("Navigation key", event.key, event.type);
+}, { keys: ["pageup", "pagedown"] });
+
 watcher.stop();
 blocker.stop();
+pageWatcher.stop();
 ```
 
 Returns a handle with `stop()`, `dispose()`, and `delete()` (any casing). Config reload stops active watchers automatically.
@@ -487,6 +492,16 @@ Options:
 | --- | --- | --- |
 | `includeInjected` | `false` | When `true`, callbacks also receive synthetic events. |
 | `blocking` | `false` | When `true`, the callback runs synchronously on the keyboard hook path and may return `true` to swallow the event. Aliases are `synchronous`, `sync`, and `swallow`. |
+| `key` / `keys` | all keys | Restricts the watcher to one key or an array of keys. Values can be key names or numeric virtual-key codes. Use this for blocking watchers whenever possible so unrelated keypresses never enter JavaScript on the hook path. Aliases are `keyCode` and `keyCodes`. |
+
+### `hs.keyboard.remap(sourceKey, targetKey)`
+
+Remaps one physical keyboard key to another. The source key is swallowed on both keydown and keyup; each source keydown sends the target key. Remaps are handled in native host code rather than JavaScript callbacks, so normal typing stays responsive even while remaps are active. Config reload disposes remaps automatically.
+
+```js
+hs.keyboard.remap("pageup", "end");
+hs.keyboard.remap("pagedown", "home");
+```
 
 ### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
 
@@ -505,7 +520,7 @@ if (hs.keyboard.isDown("alt")) {
 }
 ```
 
-`tap` uses `SendInput`, which is the supported Win32 input injection API. Pass `modifiers` / `withModifiers` / `holdModifiers` to hold modifiers while tapping the key. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
+`tap` uses `SendInput`, which is the supported Win32 input injection API. When called inside a blocking `hs.keyboard.watch` callback, HsWin queues the injected input until the hook callback returns so the physical key can be swallowed first. For ordinary key-to-key remaps, use `hs.keyboard.remap` instead. Pass `modifiers` / `withModifiers` / `holdModifiers` to hold modifiers while tapping the key. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
 
 ```js
 hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
@@ -689,7 +704,7 @@ hs.hotkey.bind([], "pageup", () => {
 
 The runtime diagnostics log rotates on every app launch. The JavaScript console log rotates on every config reload.
 
-Recent builds also write timing lines to the runtime log for hotkey dispatch, toast show/layout/position, and media commands (`Toast show timing`, `Media session timing`, `elapsedMs=...`). Use these when tuning perceived latency.
+Recent builds also write timing lines to the runtime log for hotkey dispatch, toast show/layout/position, and media commands (`Toast show timing`, `Media session timing`, `elapsedMs=...`). Keyboard remapping diagnostics log physical navigation key events, watcher swallow decisions, deferred injected input, and deferred input completion. Use these when tuning perceived latency or debugging remaps.
 
 Startup cleanup writes `Previous instance cleanup completed`, `Stopping previous HsWin instance`, and `Single instance guard acquired` lines to the runtime log when it scans for or terminates older instances.
 
@@ -701,7 +716,7 @@ dotnet test HsWin.slnx
 .\scripts\Build-Installer.ps1
 ```
 
-The installer is built with Inno Setup and written to `artifacts\installer\hswin-x64-setup.exe`. It installs the published `win-x64` app and shows a checked `Launch Hammerspoon (Windows Edition)` option on the final setup page.
+The installer is built with Inno Setup and written to `artifacts\installer\hswin-x64-setup.exe`. Local installer builds get a timestamp-based development version by default so repeated installs are easy to distinguish; releases pass the GitHub Actions run number explicitly. It installs the published `win-x64` app and shows a checked `Launch Hammerspoon (Windows Edition)` option on the final setup page.
 
 ## Releases
 

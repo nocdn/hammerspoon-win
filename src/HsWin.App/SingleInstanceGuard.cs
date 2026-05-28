@@ -1,4 +1,5 @@
 using HsWin.Core.Logging;
+using System.Diagnostics;
 
 namespace HsWin.App;
 
@@ -30,6 +31,7 @@ internal sealed class SingleInstanceGuard : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(mutexName);
         ArgumentNullException.ThrowIfNull(terminatePreviousInstances);
 
+        var startedAt = Stopwatch.GetTimestamp();
         var mutex = new Mutex(initiallyOwned: false, mutexName);
         var cleaned = false;
 
@@ -47,11 +49,13 @@ internal sealed class SingleInstanceGuard : IDisposable
             }
         }
 
-        logger.Info("Single instance guard acquired.");
+        logger.Info($"Single instance guard acquired elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
 
         if (!cleaned)
         {
+            var cleanupStartedAt = Stopwatch.GetTimestamp();
             terminatePreviousInstances(logger);
+            logger.Info($"Single instance post-acquire cleanup elapsedMs={Stopwatch.GetElapsedTime(cleanupStartedAt).TotalMilliseconds:F3}.");
         }
 
         return new SingleInstanceGuard(mutex);

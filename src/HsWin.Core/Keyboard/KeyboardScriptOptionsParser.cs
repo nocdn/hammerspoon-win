@@ -15,13 +15,15 @@ public static class KeyboardScriptOptionsParser
 
         var includeInjected = ScriptArgumentReader.GetPropertyValue(value, "includeInjected");
         var blocking = ScriptArgumentReader.GetPropertyValue(value, "blocking", "synchronous", "sync", "swallow");
+        var keys = ScriptArgumentReader.GetPropertyValue(value, "keys", "key", "keyCodes", "keyCode");
         return new KeyboardEventWatchOptions(
             ScriptArgumentReader.IsMissing(includeInjected)
                 ? KeyboardEventWatchOptions.Default.IncludeInjected
                 : Convert.ToBoolean(includeInjected, CultureInfo.InvariantCulture),
             ScriptArgumentReader.IsMissing(blocking)
                 ? KeyboardEventWatchOptions.Default.Blocking
-                : Convert.ToBoolean(blocking, CultureInfo.InvariantCulture));
+                : Convert.ToBoolean(blocking, CultureInfo.InvariantCulture),
+            ParseKeyFilter(keys));
     }
 
     public static KeyboardTapOptions ParseTapOptions(object? value)
@@ -89,5 +91,32 @@ public static class KeyboardScriptOptionsParser
         {
             throw new ArgumentException("intervalMs must be a number of milliseconds.", nameof(value), exception);
         }
+    }
+
+    private static IReadOnlySet<uint>? ParseKeyFilter(object? value)
+    {
+        if (ScriptArgumentReader.IsMissing(value))
+        {
+            return null;
+        }
+
+        var keys = new HashSet<uint>();
+        if (value is string or int or uint)
+        {
+            keys.Add(HotkeyParser.ParseVirtualKey(value));
+            return keys;
+        }
+
+        foreach (var item in ScriptArgumentReader.EnumerateIndexedValues(value))
+        {
+            keys.Add(HotkeyParser.ParseVirtualKey(item));
+        }
+
+        if (keys.Count == 0)
+        {
+            keys.Add(HotkeyParser.ParseVirtualKey(value));
+        }
+
+        return keys;
     }
 }

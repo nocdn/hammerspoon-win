@@ -100,17 +100,23 @@ internal sealed class AppController : IDisposable
 
     public void Start()
     {
+        var startupStartedAt = Stopwatch.GetTimestamp();
         try
         {
-            _logger.Info($"Starting {AppBranding.DisplayName}.");
+            _logger.Info($"Starting {AppBranding.DisplayName} processId={Environment.ProcessId}.");
             _logger.Info($"Runtime log: {_logger.LogFilePath}");
             _logger.Info($"Config file: {_configFileService.ConfigFilePath}");
+            var configStartedAt = Stopwatch.GetTimestamp();
             _configFileService.EnsureConfigFile();
+            _logger.Info($"Startup config ensure completed elapsedMs={Stopwatch.GetElapsedTime(configStartedAt).TotalMilliseconds:F3}.");
+            var trayStartedAt = Stopwatch.GetTimestamp();
             _trayIconService.Show();
-            _logger.Info("Tray icon shown.");
+            _logger.Info($"Tray icon shown elapsedMs={Stopwatch.GetElapsedTime(trayStartedAt).TotalMilliseconds:F3}.");
+            var prewarmStartedAt = Stopwatch.GetTimestamp();
             _toastPresenter.Prewarm();
-            _logger.Info("Toast presenter prewarmed.");
+            _logger.Info($"Toast presenter prewarmed elapsedMs={Stopwatch.GetElapsedTime(prewarmStartedAt).TotalMilliseconds:F3}.");
             ReloadConfig();
+            _logger.Info($"Startup sequence queued config reload elapsedMs={Stopwatch.GetElapsedTime(startupStartedAt).TotalMilliseconds:F3}.");
         }
         catch (Exception exception)
         {
@@ -139,7 +145,7 @@ internal sealed class AppController : IDisposable
     {
         var generation = Interlocked.Increment(ref _reloadGeneration);
         var startedAt = Stopwatch.GetTimestamp();
-        _logger.Info("Reload Config requested.");
+        _logger.Info($"Reload Config requested generation={generation}.");
         _toastPresenter.Show(ConfigReloadAlerts.CreateReloadingAlert());
 
         Task.Run(() =>
@@ -155,10 +161,14 @@ internal sealed class AppController : IDisposable
                     if (generation != Volatile.Read(ref _reloadGeneration) || _disposed)
                     {
                         superseded = true;
+                        _logger.Info($"Config reload superseded generation={generation}.");
                     }
                     else
                     {
+                        var reloadStartedAt = Stopwatch.GetTimestamp();
                         _scriptRuntime.ReloadFromFile(configPath);
+                        _logger.Info(
+                            $"Script runtime reload completed generation={generation} elapsedMs={Stopwatch.GetElapsedTime(reloadStartedAt).TotalMilliseconds:F3}.");
                     }
                 }
             }
@@ -178,11 +188,11 @@ internal sealed class AppController : IDisposable
                 Thread.Sleep(remainingReloadingTime);
             }
 
-            _dispatcher.BeginInvoke(() => CompleteReloadOnDispatcher(generation, failure));
+            _dispatcher.BeginInvoke(() => CompleteReloadOnDispatcher(generation, failure, startedAt));
         });
     }
 
-    private void CompleteReloadOnDispatcher(int generation, Exception? failure)
+    private void CompleteReloadOnDispatcher(int generation, Exception? failure, long startedAt)
     {
         if (_disposed || generation != Volatile.Read(ref _reloadGeneration))
         {
@@ -196,7 +206,9 @@ internal sealed class AppController : IDisposable
             return;
         }
 
-        _logger.Info($"Config reloaded. Console log: {_scriptConsoleLogger.CurrentLogFilePath}");
+        _logger.Info(
+            $"Config reloaded generation={generation} elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. " +
+            $"Console log: {_scriptConsoleLogger.CurrentLogFilePath}");
         _toastPresenter.Show(ConfigReloadAlerts.CreateReloadedAlert());
     }
 

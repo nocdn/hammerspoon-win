@@ -83,6 +83,48 @@ public sealed class KeyboardWatchDispatcherTests
     }
 
     [Fact]
+    public void BlockingWatcherSwallowStopsLaterWatchers()
+    {
+        var scheduler = new CapturingKeyboardScheduler();
+        var dispatcher = new KeyboardWatchDispatcher(new CapturingRuntimeLogger(), scheduler);
+        var laterCalled = false;
+        var first = CreateSubscription(blocking: true, _ => true);
+        var later = CreateSubscription(blocking: true, _ =>
+        {
+            laterCalled = true;
+            return false;
+        }, id: 2);
+
+        var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [first, later]);
+
+        Assert.True(shouldSwallow);
+        Assert.False(laterCalled);
+        Assert.Empty(scheduler.Callbacks);
+    }
+
+    [Fact]
+    public void KeyFilterSkipsUnmatchedEvents()
+    {
+        var scheduler = new CapturingKeyboardScheduler();
+        var dispatcher = new KeyboardWatchDispatcher(new CapturingRuntimeLogger(), scheduler);
+        var called = false;
+        var subscription = new KeyboardWatchSubscription(
+            1,
+            new KeyboardEventWatchOptions(IncludeInjected: false, Blocking: false, KeyFilter: new HashSet<uint> { 0x21 }),
+            _ =>
+            {
+                called = true;
+                return false;
+            });
+
+        var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [subscription]);
+
+        Assert.False(shouldSwallow);
+        Assert.False(called);
+        Assert.Empty(scheduler.Callbacks);
+    }
+
+    [Fact]
     public void NonBlockingWatcherSkipsInjectedEventsByDefault()
     {
         var scheduler = new CapturingKeyboardScheduler();
