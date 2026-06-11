@@ -629,6 +629,107 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesHttpRequestWithFilesArrayUpload()
+    {
+        var http = new CapturingHttpService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Http = http
+        });
+
+        runtime.Reload("""
+            hs.http.post("https://api.example.test/upload", {
+              files: [
+                { name: "clip", path: "C:\\Temp\\clip.wav", fileName: "clip.wav", contentType: "audio/wav" },
+                { name: "metadata", value: "not-a-file" }
+              ]
+            }, () => {});
+            """);
+
+        var request = Assert.Single(http.Requests);
+        Assert.Collection(
+            request.Options.Multipart,
+            part =>
+            {
+                Assert.Equal("clip", part.Name);
+                Assert.Equal(@"C:\Temp\clip.wav", part.Path);
+                Assert.Equal("clip.wav", part.FileName);
+                Assert.Equal("audio/wav", part.ContentType);
+            },
+            part =>
+            {
+                Assert.Equal("metadata", part.Name);
+                Assert.Equal("not-a-file", part.Value);
+            });
+    }
+
+    [Fact]
+    public void ReloadExposesHttpRequestWithFilesObjectMapUpload()
+    {
+        var http = new CapturingHttpService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Http = http
+        });
+
+        runtime.Reload("""
+            hs.http.post("https://api.example.test/upload", {
+              files: { clip: "C:\\Temp\\clip.wav" }
+            }, () => {});
+            """);
+
+        var request = Assert.Single(http.Requests);
+        var part = Assert.Single(request.Options.Multipart);
+        Assert.Equal("clip", part.Name);
+        Assert.Equal(@"C:\Temp\clip.wav", part.Path);
+    }
+
+    [Fact]
+    public void ReloadExecuteLogsCommandDescriptionWithoutRawCommandText()
+    {
+        var logger = new CapturingRuntimeLogger();
+        var shell = new CapturingShellService
+        {
+            ExecuteResult = new ShellExecutionResult("ignored", true, 0, string.Empty, string.Empty, TimedOut: false)
+        };
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Logger = logger,
+            Shell = shell
+        });
+
+        runtime.Reload("""
+            hs.execute("curl --header Authorization: Bearer fake-token-value");
+            """);
+
+        var log = Assert.Single(logger.Infos, message => message.Contains("hs.execute() requested", StringComparison.Ordinal));
+        Assert.DoesNotContain("fake-token-value", log);
+        Assert.DoesNotContain("curl --header", log);
+        Assert.Contains("length=", log);
+        Assert.Contains("sha256=", log);
+    }
+
+    [Fact]
+    public void ReloadHttpGetLogsRedactedUrlWithoutQueryValues()
+    {
+        var logger = new CapturingRuntimeLogger();
+        var http = new CapturingHttpService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Logger = logger,
+            Http = http
+        });
+
+        runtime.Reload("""
+            hs.http.get("https://api.example.test/v1/data?token=secret-query-value&model=test", () => {});
+            """);
+
+        var log = Assert.Single(logger.Infos, message => message.Contains("hs.http.request() started", StringComparison.Ordinal));
+        Assert.Contains("https://api.example.test/v1/data?keys=token,model", log);
+        Assert.DoesNotContain("secret-query-value", log);
+    }
+
+    [Fact]
     public void ReloadDisposesOutstandingHttpRequests()
     {
         var http = new CapturingHttpService();

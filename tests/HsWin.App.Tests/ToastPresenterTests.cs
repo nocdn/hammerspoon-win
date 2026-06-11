@@ -109,6 +109,26 @@ public sealed class ToastPresenterTests
     }
 
     [Fact]
+    public void HideAnimatesToastPositionedOnNegativeMonitor()
+    {
+        FakeToastView? window = null;
+        using var presenter = new ToastPresenter(
+            Dispatcher.CurrentDispatcher,
+            () => window = new FakeToastView(),
+            view =>
+            {
+                view.Left = -1600;
+                view.Top = 900;
+            });
+
+        presenter.Show(AlertRequest.Create("Visible", AlertKind.Normal, 1000));
+        presenter.Show(AlertRequest.Create("Hide", AlertKind.Normal, 0));
+
+        Assert.NotNull(window);
+        Assert.Equal(1, window.BeginExitAnimationCount);
+    }
+
+    [Fact]
     public void DisposeClosesCachedWindow()
     {
         FakeToastView? window = null;
@@ -174,8 +194,11 @@ public sealed class ToastPresenterTests
             Requests.Add(request);
         }
 
+        public int BeginExitAnimationCount { get; private set; }
+
         public void BeginExitAnimation(Action onComplete)
         {
+            BeginExitAnimationCount++;
             onComplete();
         }
 

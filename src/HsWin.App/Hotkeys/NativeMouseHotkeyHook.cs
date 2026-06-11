@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 
 namespace HsWin.App.Hotkeys;
 
-internal sealed partial class NativeMouseHotkeyHook : IDisposable
+internal sealed class NativeMouseHotkeyHook : IDisposable
 {
     private const int HcAction = 0;
     private const int WhMouseLl = 14;
@@ -14,6 +14,7 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
     private const int WmMButtonUp = 0x0208;
     private const int WmXButtonDown = 0x020B;
     private const int WmXButtonUp = 0x020C;
+    private const int WmQuit = 0x0012;
     private const int XButton1 = 0x0001;
     private const int XButton2 = 0x0002;
     private const int VkShift = 0x10;
@@ -22,21 +23,35 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
     private const short KeyPressedMask = unchecked((short)0x8000);
+    private static readonly TimeSpan HookInstallTimeout = TimeSpan.FromSeconds(5);
 
     private readonly object _gate = new();
     private readonly IRuntimeLogger _logger;
+    private readonly IMouseHookPlatform _platform;
     private readonly SynchronizationContext? _callbackContext;
     private readonly Dictionary<int, RegistrationState> _registrations = [];
     private readonly HashSet<HotkeyMouseButton> _consumedButtons = [];
-    private readonly HookProcedure _hookProcedure;
+    private readonly MouseHookProcedure _hookProcedure;
     private IntPtr _hookHandle;
+    private Thread? _hookThread;
+    private uint _hookThreadId;
+    private Exception? _hookInstallException;
     private int _nextId = 1;
     private bool _disposed;
 
     public NativeMouseHotkeyHook(IRuntimeLogger logger)
+        : this(logger, Win32MouseHookPlatform.Instance, SynchronizationContext.Current)
+    {
+    }
+
+    internal NativeMouseHotkeyHook(
+        IRuntimeLogger logger,
+        IMouseHookPlatform platform,
+        SynchronizationContext? callbackContext)
     {
         _logger = logger;
-        _callbackContext = SynchronizationContext.Current;
+        _platform = platform;
+        _callbackContext = callbackContext;
         _hookProcedure = HookCallback;
     }
 
@@ -131,7 +146,7 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
             }
         }
 
-        return User32.CallNextHookEx(_hookHandle, code, wParam, lParam);
+        return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
     }
 
     private bool TryHandleMouseButtonEvent(MouseButtonEvent mouseButtonEvent)
@@ -205,15 +220,59 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
             return;
         }
 
-        _hookHandle = User32.SetWindowsHookEx(WhMouseLl, _hookProcedure, Kernel32.GetModuleHandle(null), 0);
-        if (_hookHandle == IntPtr.Zero)
+        _hookInstallException = null;
+        using var ready = new ManualResetEventSlim();
+        _hookThread = new Thread(() => HookThreadMain(ready))
         {
-            var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not install low-level mouse hook.");
-            _logger.Error("Low-level mouse hook installation failed.", exception);
+            IsBackground = true,
+            Name = "HsWin Mouse Hook"
+        };
+        _hookThread.SetApartmentState(ApartmentState.STA);
+        _hookThread.Start();
+
+        if (!ready.Wait(HookInstallTimeout))
+        {
+            var exception = new TimeoutException($"Timed out after {HookInstallTimeout.TotalMilliseconds:F0}ms while installing WH_MOUSE_LL hook.");
+            _logger.Error("Low-level mouse hook installation timed out.", exception);
             throw exception;
         }
 
-        _logger.Info($"Low-level mouse hook installed. Hook=0x{_hookHandle.ToInt64():X}");
+        if (_hookInstallException is not null)
+        {
+            throw _hookInstallException;
+        }
+
+        if (_hookHandle == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("WH_MOUSE_LL hook thread started without publishing a hook handle.");
+        }
+    }
+
+    private void HookThreadMain(ManualResetEventSlim ready)
+    {
+        _hookThreadId = _platform.GetCurrentThreadId();
+
+        var hookHandle = _platform.SetWindowsHookEx(WhMouseLl, _hookProcedure, _platform.GetModuleHandle(null), 0);
+        if (hookHandle == IntPtr.Zero)
+        {
+            var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not install low-level mouse hook.");
+            _hookInstallException = exception;
+            _logger.Error("Low-level mouse hook installation failed.", exception);
+            ready.Set();
+            return;
+        }
+
+        _hookHandle = hookHandle;
+        _logger.Info($"Low-level mouse hook installed. Hook=0x{hookHandle.ToInt64():X} threadId={_hookThreadId}.");
+        ready.Set();
+
+        while (_platform.GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+        {
+            _platform.TranslateMessage(ref message);
+            _platform.DispatchMessage(ref message);
+        }
+
+        _logger.Info($"Mouse hook thread exited threadId={_hookThreadId}.");
     }
 
     private void Unregister(int id)
@@ -236,12 +295,13 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
 
     private void UninstallHook()
     {
-        if (_hookHandle == IntPtr.Zero)
+        var hookHandle = _hookHandle;
+        if (hookHandle == IntPtr.Zero)
         {
             return;
         }
 
-        if (User32.UnhookWindowsHookEx(_hookHandle))
+        if (_platform.UnhookWindowsHookEx(hookHandle))
         {
             _logger.Info("Low-level mouse hook uninstalled.");
         }
@@ -252,9 +312,20 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
         }
 
         _hookHandle = IntPtr.Zero;
+        if (_hookThreadId != 0)
+        {
+            if (!_platform.PostThreadMessage(_hookThreadId, WmQuit, IntPtr.Zero, IntPtr.Zero))
+            {
+                var exception = new Win32Exception(Marshal.GetLastPInvokeError(), "Could not stop the mouse hook thread.");
+                _logger.Error("Mouse hook thread stop signal failed.", exception);
+            }
+        }
+
+        _hookThreadId = 0;
+        _hookThread = null;
     }
 
-    private static HotkeyModifiers ReadPressedModifiers()
+    private HotkeyModifiers ReadPressedModifiers()
     {
         var modifiers = HotkeyModifiers.None;
 
@@ -281,9 +352,9 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
         return modifiers;
     }
 
-    private static bool IsKeyPressed(int virtualKey)
+    private bool IsKeyPressed(int virtualKey)
     {
-        return (User32.GetAsyncKeyState(virtualKey) & KeyPressedMask) != 0;
+        return (_platform.GetAsyncKeyState(virtualKey) & KeyPressedMask) != 0;
     }
 
     internal readonly record struct MouseButtonEvent(HotkeyMouseButton Button, bool IsDown);
@@ -291,7 +362,7 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct MouseHookStruct
     {
-        public Point Point;
+        public MousePoint Point;
 
         public uint MouseData;
 
@@ -303,7 +374,7 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct Point
+    private struct MousePoint
     {
         public int X;
 
@@ -334,29 +405,5 @@ internal sealed partial class NativeMouseHotkeyHook : IDisposable
             _owner.Unregister(_id);
             _disposed = true;
         }
-    }
-
-    private delegate IntPtr HookProcedure(int code, IntPtr wParam, IntPtr lParam);
-
-    private static partial class User32
-    {
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern IntPtr SetWindowsHookEx(int idHook, HookProcedure hookProcedure, IntPtr moduleHandle, uint threadId);
-
-        [LibraryImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool UnhookWindowsHookEx(IntPtr hookHandle);
-
-        [LibraryImport("user32.dll")]
-        public static partial IntPtr CallNextHookEx(IntPtr hookHandle, int code, IntPtr wParam, IntPtr lParam);
-
-        [LibraryImport("user32.dll")]
-        public static partial short GetAsyncKeyState(int virtualKey);
-    }
-
-    private static partial class Kernel32
-    {
-        [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
-        public static partial IntPtr GetModuleHandle(string? moduleName);
     }
 }

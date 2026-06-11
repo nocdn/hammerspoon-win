@@ -16,6 +16,26 @@ public static class ScriptArgumentReader
         return value is ScriptObject or IReadOnlyDictionary<string, object?> or IDictionary;
     }
 
+    public static bool HasIndexedValues(object? value)
+    {
+        if (IsMissing(value))
+        {
+            return false;
+        }
+
+        if (value is ScriptObject scriptObject)
+        {
+            return scriptObject.PropertyIndices.Any();
+        }
+
+        if (value is IDictionary)
+        {
+            return false;
+        }
+
+        return value is IEnumerable and not string;
+    }
+
     public static object? GetPropertyValue(object? value, params string[] names)
     {
         if (IsMissing(value))

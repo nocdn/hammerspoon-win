@@ -34,19 +34,19 @@ internal sealed class ProcessShellService : IShellService
                 KillTimedOutProcess(process);
                 var timedOutOutput = outputTask.GetAwaiter().GetResult();
                 var timedOutError = errorTask.GetAwaiter().GetResult();
-                _logger.Warning($"Command timed out command='{command}' timeoutMs={options.TimeoutMs}.");
+                _logger.Warning($"Command timed out command={LogSanitizer.DescribeCommand(command)} timeoutMs={options.TimeoutMs}.");
                 return new ShellExecutionResult(command, false, null, timedOutOutput, timedOutError, TimedOut: true);
             }
 
             var output = outputTask.GetAwaiter().GetResult();
             var error = errorTask.GetAwaiter().GetResult();
             var success = process.ExitCode == 0;
-            _logger.Info($"Command completed command='{command}' exitCode={process.ExitCode} success={success}.");
+            _logger.Info($"Command completed command={LogSanitizer.DescribeCommand(command)} exitCode={process.ExitCode} success={success}.");
             return new ShellExecutionResult(command, success, process.ExitCode, output, error, TimedOut: false);
         }
         catch (Exception exception)
         {
-            _logger.Error($"Command failed command='{command}'.", exception);
+            _logger.Error($"Command failed command={LogSanitizer.DescribeCommand(command)}.", exception);
             return new ShellExecutionResult(command, false, null, string.Empty, exception.Message, TimedOut: false);
         }
     }

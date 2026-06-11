@@ -48,7 +48,7 @@ public sealed class TaskScriptApi
         var handle = new ScriptResourceHandle(task);
         _trackResource(handle);
         task.Start();
-        _logger.Info($"Script hs.task.run() started command='{normalizedCommand}' timeoutMs={parsedOptions.TimeoutMs}.");
+        _logger.Info($"Script hs.task.run() started command={LogSanitizer.DescribeCommand(normalizedCommand)} timeoutMs={parsedOptions.TimeoutMs}.");
         return handle;
     }
 

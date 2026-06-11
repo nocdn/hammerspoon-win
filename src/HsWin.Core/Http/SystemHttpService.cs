@@ -73,7 +73,7 @@ public sealed class SystemHttpService : IHttpService
                 var bodyBytes = await response.Content.ReadAsByteArrayAsync(linked.Token).ConfigureAwait(false);
                 var body = ReadBody(_options.ResponseType, bodyBytes, response.Content.Headers.ContentType?.CharSet);
                 var headers = ReadHeaders(response);
-                _logger.Info($"HTTP request completed method='{_options.Method}' url='{_options.Url}' statusCode={(int)response.StatusCode}.");
+                _logger.Info($"HTTP request completed method='{_options.Method}' url={LogSanitizer.DescribeUrl(_options.Url)} statusCode={(int)response.StatusCode}.");
                 InvokeCallback(new HttpResponseSnapshot(
                     response.IsSuccessStatusCode,
                     (int)response.StatusCode,
@@ -89,7 +89,7 @@ public sealed class SystemHttpService : IHttpService
             }
             catch (OperationCanceledException)
             {
-                _logger.Info($"HTTP request canceled method='{_options.Method}' url='{_options.Url}'.");
+                _logger.Info($"HTTP request canceled method='{_options.Method}' url={LogSanitizer.DescribeUrl(_options.Url)}.");
             }
             catch (Exception exception)
             {

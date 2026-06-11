@@ -131,7 +131,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         var window = _window ??= _createWindow();
         CancelExitAndReset(window);
 
-        var wasOnScreen = IsPositionedOnScreen(window);
+        var wasOnScreen = !IsHiddenOffscreen(window);
         if (!wasOnScreen)
         {
             MoveOffscreen(window);
@@ -189,7 +189,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
             return;
         }
 
-        if (!IsPositionedOnScreen(_window))
+        if (IsHiddenOffscreen(_window))
         {
             CancelExitAndReset(_window);
             MoveOffscreen(_window);
@@ -217,8 +217,9 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         window.PrepareForShow();
     }
 
-    private static bool IsPositionedOnScreen(IToastView window) =>
-        window.Left > HiddenWindowCoordinate + 1_000_000;
+    private static bool IsHiddenOffscreen(IToastView window) =>
+        Math.Abs(window.Left - HiddenWindowCoordinate) < 0.5
+        && Math.Abs(window.Top - HiddenWindowCoordinate) < 0.5;
 
     private void HideTimerTick(object? sender, EventArgs e)
     {

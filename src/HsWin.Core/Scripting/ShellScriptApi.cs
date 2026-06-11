@@ -19,7 +19,7 @@ public sealed class ShellScriptApi
     {
         var normalizedCommand = ScriptArgumentReader.RequireNonWhiteSpaceString(command, "command");
         var parsedOptions = ParseExecutionOptions(options);
-        _logger.Info($"Script hs.execute() requested command='{normalizedCommand}' timeoutMs={parsedOptions.TimeoutMs}.");
+        _logger.Info($"Script hs.execute() requested command={LogSanitizer.DescribeCommand(normalizedCommand)} timeoutMs={parsedOptions.TimeoutMs}.");
         var result = _shell.Execute(normalizedCommand, parsedOptions);
         _logger.Info($"Script hs.execute() completed success={result.Success} exitCode={result.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "null"} timedOut={result.TimedOut}.");
         return ScriptJson.Serialize(result);

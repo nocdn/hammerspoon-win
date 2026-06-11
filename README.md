@@ -704,6 +704,8 @@ hs.hotkey.bind([], "pageup", () => {
 
 The runtime diagnostics log rotates on every app launch. The JavaScript console log rotates on every config reload.
 
+Runtime diagnostics intentionally redact shell command text and URL query values. Logs keep command fingerprints, lengths, HTTP method, host/path, and other request metadata instead of persisting likely secrets from automation scripts.
+
 Recent builds also write timing lines to the runtime log for hotkey dispatch, toast show/layout/position, and media commands (`Toast show timing`, `Media session timing`, `elapsedMs=...`). Keyboard remapping diagnostics log physical navigation key events, watcher swallow decisions, deferred injected input, and deferred input completion. Use these when tuning perceived latency or debugging remaps.
 
 Startup cleanup writes `Previous instance cleanup completed`, `Stopping previous HsWin instance`, and `Single instance guard acquired` lines to the runtime log when it scans for or terminates older instances.

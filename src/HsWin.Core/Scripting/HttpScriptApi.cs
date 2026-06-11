@@ -59,7 +59,7 @@ public sealed class HttpScriptApi
             request,
             () => Interlocked.Exchange(ref disposed, 1)));
         _trackResource(handle);
-        _logger.Info($"Script hs.http.request() started method='{parsedOptions.Method}' url='{parsedOptions.Url}'.");
+        _logger.Info($"Script hs.http.request() started method='{parsedOptions.Method}' url={LogSanitizer.DescribeUrl(parsedOptions.Url)}.");
         return handle;
     }
 
@@ -177,6 +177,16 @@ public sealed class HttpScriptApi
         if (filesValue is string)
         {
             parts.Add(new HttpMultipartPart("file", null, ScriptArgumentReader.RequireNonWhiteSpaceString(filesValue, "file"), null, null));
+            return parts;
+        }
+
+        if (ScriptArgumentReader.HasIndexedValues(filesValue))
+        {
+            foreach (var fileValue in ScriptArgumentReader.EnumerateIndexedValues(filesValue))
+            {
+                parts.Add(ReadMultipartPart(fileValue));
+            }
+
             return parts;
         }
 
