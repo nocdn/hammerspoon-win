@@ -234,6 +234,8 @@ internal sealed class AppController : IDisposable
         _logger.Info("Hotkey service disposed.");
         _keyboardEventService.Dispose();
         _logger.Info("Keyboard event service disposed.");
+        _clipboardService.Dispose();
+        _logger.Info("Clipboard service disposed.");
         _windowService.Dispose();
         _logger.Info("Window service disposed.");
         _toastPresenter.Dispose();

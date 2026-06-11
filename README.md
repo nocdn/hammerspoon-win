@@ -2,7 +2,7 @@
 
 Hammerspoon (Windows Edition) is a tray-first Windows automation host inspired by Hammerspoon. It starts without a main window, loads JavaScript from `%APPDATA%\HsWin\config.js`, and exposes a frozen `hs` global plus `console` logging.
 
-Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast with a spinning loader appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, and timers, and rotates the config console log file.
+Reload the config from the tray menu at any time. Reload work runs off the UI thread so the tray stays responsive. A `Reloading config…` toast with a spinning loader appears immediately; when reload finishes, it is replaced by a `Config reloaded` success toast (or an error toast if reload failed). Each reload starts a fresh JavaScript engine, disposes previous hotkey bindings, keyboard watchers, clipboard watchers, and timers, and rotates the config console log file.
 
 Startup is single-instance. Before the tray app creates hotkeys, keyboard hooks, timers, or the JavaScript runtime, the new process stops any older `Hammerspoon (Windows Edition)` or `HsWin.App` processes in the current Windows session and takes a named instance guard. This prevents stale instances from keeping global hotkeys registered after an upgrade or test launch.
 
@@ -17,7 +17,7 @@ Right-click the notification area icon:
 
 ## Current API
 
-The `hs` global and `console` are frozen. Reloading config rebuilds the JavaScript engine and disposes hotkeys, keyboard watchers, timers, and native keyboard repeats from the previous load.
+The `hs` global and `console` are frozen. Reloading config rebuilds the JavaScript engine and disposes hotkeys, keyboard watchers, clipboard watchers, timers, and native keyboard repeats from the previous load.
 
 ### `hs.alert.show(text, optionsOrKind?, durationMs?)`
 
@@ -65,7 +65,7 @@ console.error(new Error("Something went wrong"));
 console.log("Apps", hs.application.runningApplications());
 ```
 
-### `hs.pasteboard.getContents()`, `hs.pasteboard.setContents(text)`, `hs.clipboard`
+### `hs.pasteboard.getContents()`, `hs.pasteboard.setContents(text)`, `hs.pasteboard.watch(callback)`, `hs.clipboard`
 
 Gets or sets Unicode text on the Windows clipboard. `hs.clipboard` is an alias for `hs.pasteboard`.
 
@@ -75,6 +75,27 @@ hs.clipboard.setContents(`${previous}\nUpdated by HsWin`);
 ```
 
 `getContents()` returns an empty string when the clipboard does not currently contain text. `setContents(text)` returns `true` after the clipboard is updated.
+
+`watch(callback)` subscribes to native Windows clipboard change notifications. The callback receives an event object with `sequence`, `contents`, and `hasText`. Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes active watchers automatically.
+
+```js
+const watcher = hs.pasteboard.watch(event => {
+  console.log("Clipboard changed", event.sequence, event.contents);
+});
+
+watcher.stop();
+```
+
+For in-place text transforms, `replaceContents(replacer)` and `replaceText(searchValue, replaceValue)` read the current clipboard, write only when the text changes, and return `{ changed, previous, current }`. `watchText(replacer)` combines `watch()` and `replaceContents()` so clipboard rewriting can be a one-liner:
+
+```js
+hs.pasteboard.watchText(text => text.replace(/\bnpm\b/g, "bun"));
+
+const result = hs.pasteboard.replaceText(/\bnpm\b/g, "bun");
+if (result.changed) {
+  hs.alert.show("Clipboard updated", { durationMs: 800 });
+}
+```
 
 ### `hs.execute(command, options?)`
 

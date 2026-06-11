@@ -17,4 +17,9 @@ public sealed class NullClipboardService : IClipboardService
     {
         throw new NotSupportedException("Clipboard access is not available in this runtime.");
     }
+
+    public IDisposable Watch(Action<ClipboardChangeSnapshot> callback)
+    {
+        throw new NotSupportedException("Clipboard access is not available in this runtime.");
+    }
 }

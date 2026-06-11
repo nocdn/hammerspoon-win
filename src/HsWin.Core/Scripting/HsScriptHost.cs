@@ -10,7 +10,12 @@ public sealed class HsScriptHost
 
         Alerts = new AlertScriptApi(services.Alerts);
         Console = new ConsoleScriptApi(services.Console);
-        Clipboard = new ClipboardScriptApi(services.Clipboard, services.Logger);
+        Clipboard = new ClipboardScriptApi(
+            services.Clipboard,
+            services.Logger,
+            services.CallbackScheduler,
+            callbacks,
+            trackResource);
         Shell = new ShellScriptApi(services.Shell, services.Logger);
         Applications = new ApplicationScriptApi(services.Applications, services.Shell, services.Logger);
         Media = new MediaScriptApi(services.Media, services.Logger);

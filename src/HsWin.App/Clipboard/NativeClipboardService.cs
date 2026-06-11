@@ -1,80 +1,72 @@
 using HsWin.Core.Clipboard;
 using HsWin.Core.Logging;
-using System.Runtime.InteropServices;
 using System.Windows.Threading;
-using WpfClipboard = System.Windows.Clipboard;
-using WpfTextDataFormat = System.Windows.TextDataFormat;
 
 namespace HsWin.App.Clipboard;
 
-internal sealed class NativeClipboardService : IClipboardService
+internal sealed class NativeClipboardService : IClipboardService, IDisposable
 {
-    private const int MaxAttempts = 5;
-
-    private readonly Dispatcher _dispatcher;
+    private readonly IClipboardTextStore _textStore;
+    private readonly IClipboardChangeNotifier _changeNotifier;
     private readonly IRuntimeLogger _logger;
+    private long _sequence;
+    private bool _disposed;
 
     public NativeClipboardService(Dispatcher dispatcher, IRuntimeLogger logger)
+        : this(
+            new WpfClipboardTextStore(dispatcher, logger),
+            new NativeClipboardChangeNotifier(dispatcher, logger),
+            logger)
     {
-        _dispatcher = dispatcher;
+    }
+
+    internal NativeClipboardService(
+        IClipboardTextStore textStore,
+        IClipboardChangeNotifier changeNotifier,
+        IRuntimeLogger logger)
+    {
+        _textStore = textStore;
+        _changeNotifier = changeNotifier;
         _logger = logger;
     }
 
     public string GetText()
     {
-        return InvokeOnDispatcher(() =>
-        {
-            var text = WpfClipboard.ContainsText(WpfTextDataFormat.UnicodeText)
-                ? WpfClipboard.GetText(WpfTextDataFormat.UnicodeText)
-                : string.Empty;
-            _logger.Info($"Clipboard text read length={text.Length}.");
-            return text;
-        });
+        return _textStore.Read().Text;
     }
 
     public bool SetText(string text)
     {
-        return InvokeOnDispatcher(() =>
-        {
-            if (text.Length == 0)
-            {
-                WpfClipboard.Clear();
-            }
-            else
-            {
-                WpfClipboard.SetText(text, WpfTextDataFormat.UnicodeText);
-            }
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _textStore.Write(text);
+    }
 
-            _logger.Info($"Clipboard text written length={text.Length}.");
-            return true;
+    public IDisposable Watch(Action<ClipboardChangeSnapshot> callback)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(callback);
+
+        return _changeNotifier.Watch(() =>
+        {
+            var contents = _textStore.Read();
+            var snapshot = new ClipboardChangeSnapshot(
+                Interlocked.Increment(ref _sequence),
+                contents.Text,
+                contents.HasText);
+            _logger.Info(
+                $"Clipboard change snapshot sequence={snapshot.Sequence} length={snapshot.Contents.Length} hasText={snapshot.HasText}.");
+            callback(snapshot);
         });
     }
 
-    private T InvokeOnDispatcher<T>(Func<T> action)
+    public void Dispose()
     {
-        return _dispatcher.CheckAccess()
-            ? RetryClipboardOperation(action)
-            : _dispatcher.Invoke(() => RetryClipboardOperation(action));
-    }
-
-    private static T RetryClipboardOperation<T>(Func<T> action)
-    {
-        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        if (_disposed)
         {
-            try
-            {
-                return action();
-            }
-            catch (ExternalException) when (attempt < MaxAttempts)
-            {
-                Thread.Sleep(attempt * 20);
-            }
-            catch (COMException) when (attempt < MaxAttempts)
-            {
-                Thread.Sleep(attempt * 20);
-            }
+            return;
         }
 
-        return action();
+        _changeNotifier.Dispose();
+        _disposed = true;
     }
 }

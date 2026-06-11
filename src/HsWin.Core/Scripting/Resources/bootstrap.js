@@ -135,6 +135,12 @@
     });
   };
 
+  const createPasteboardReplaceResult = (previous, current) => Object.freeze({
+    changed: previous !== current,
+    previous,
+    current
+  });
+
   const pasteboard = Object.freeze({
     getContents() {
       return host.Clipboard.GetText();
@@ -142,6 +148,47 @@
 
     setContents(text) {
       return host.Clipboard.SetText(text);
+    },
+
+    replaceContents(replacer) {
+      const previous = this.getContents();
+      let current = typeof replacer === "function"
+        ? replacer(previous)
+        : replacer;
+
+      if (current === undefined || current === null || current === false) {
+        return createPasteboardReplaceResult(previous, previous);
+      }
+
+      if (typeof current !== "string") {
+        throw new Error("Clipboard replacement must be a string, null, undefined, or false.");
+      }
+
+      if (current !== previous) {
+        this.setContents(current);
+      }
+
+      return createPasteboardReplaceResult(previous, current);
+    },
+
+    replaceText(searchValue, replaceValue) {
+      return this.replaceContents(text => text.replace(searchValue, replaceValue));
+    },
+
+    watch(callback) {
+      if (typeof callback !== "function") {
+        throw new Error("Clipboard watch callback must be a function.");
+      }
+
+      return host.Clipboard.Watch(eventJson => callback(parseJson(eventJson)));
+    },
+
+    watchText(replacer) {
+      if (typeof replacer !== "function") {
+        throw new Error("Clipboard text watcher must be a function.");
+      }
+
+      return this.watch(event => this.replaceContents(text => replacer(text, event)));
     }
   });
 

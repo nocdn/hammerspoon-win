@@ -489,6 +489,71 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesPasteboardWatchAndDisposesOnReload()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var clipboard = new CapturingClipboardService("hello");
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Clipboard = clipboard
+        });
+
+        runtime.Reload("""
+            hs.pasteboard.watch(event => {
+              hs.alert.show(`${event.sequence}:${event.contents}:${event.hasText}`, "normal", 1);
+            });
+            """);
+        var watch = Assert.Single(clipboard.Watches);
+        clipboard.TriggerChange("npm install react");
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("1:npm install react:true", request.Text);
+
+        runtime.Reload("""console.log("second load");""");
+
+        Assert.True(watch.IsDisposed);
+    }
+
+    [Fact]
+    public void PasteboardWatchTextReplacesChangedClipboardTextInPlace()
+    {
+        var clipboard = new CapturingClipboardService("initial");
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Clipboard = clipboard
+        });
+
+        runtime.Reload("""
+            hs.pasteboard.watchText(text => text.replace(/\bnpm\b/g, "bun"));
+            """);
+        clipboard.TriggerChange("npm install react && npm test");
+
+        Assert.Equal("bun install react && bun test", clipboard.Text);
+    }
+
+    [Fact]
+    public void PasteboardReplaceTextReturnsReplacementResult()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var clipboard = new CapturingClipboardService("npm install react");
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Clipboard = clipboard
+        });
+
+        runtime.Reload("""
+            const result = hs.pasteboard.replaceText(/\bnpm\b/g, "bun");
+            hs.alert.show(`${result.changed}:${result.previous}:${result.current}`, "normal", 1);
+            """);
+
+        Assert.Equal("bun install react", clipboard.Text);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("true:npm install react:bun install react", request.Text);
+    }
+
+    [Fact]
     public void ReloadExposesExecuteCommand()
     {
         var presenter = new CapturingAlertPresenter();
@@ -1722,12 +1787,16 @@ public sealed class ScriptRuntimeTests
 
     private sealed class CapturingClipboardService : IClipboardService
     {
+        private long _sequence;
+
         public CapturingClipboardService(string text)
         {
             Text = text;
         }
 
         public string Text { get; private set; }
+
+        public List<CapturingClipboardWatch> Watches { get; } = [];
 
         public string GetText()
         {
@@ -1738,6 +1807,48 @@ public sealed class ScriptRuntimeTests
         {
             Text = text;
             return true;
+        }
+
+        public IDisposable Watch(Action<ClipboardChangeSnapshot> callback)
+        {
+            var watch = new CapturingClipboardWatch(callback);
+            Watches.Add(watch);
+            return watch;
+        }
+
+        public void TriggerChange(string text, bool hasText = true)
+        {
+            Text = hasText ? text : string.Empty;
+            var snapshot = new ClipboardChangeSnapshot(
+                Interlocked.Increment(ref _sequence),
+                Text,
+                hasText);
+            foreach (var watch in Watches.Where(watch => !watch.IsDisposed).ToArray())
+            {
+                watch.Trigger(snapshot);
+            }
+        }
+    }
+
+    private sealed class CapturingClipboardWatch : IDisposable
+    {
+        private readonly Action<ClipboardChangeSnapshot> _callback;
+
+        public CapturingClipboardWatch(Action<ClipboardChangeSnapshot> callback)
+        {
+            _callback = callback;
+        }
+
+        public bool IsDisposed { get; private set; }
+
+        public void Trigger(ClipboardChangeSnapshot snapshot)
+        {
+            _callback(snapshot);
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
         }
     }
 
