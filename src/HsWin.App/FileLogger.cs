@@ -108,6 +108,22 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
     {
         try
         {
+            foreach (var entry in _entries.GetConsumingEnumerable())
+            {
+                WriteBatch(entry);
+            }
+        }
+        catch (Exception exception)
+        {
+            WriteFallback(new LogEntry(DateTimeOffset.Now, "ERROR", "Runtime logger worker failed.", exception));
+            // Logging must never break the tray app or script reload loop.
+        }
+    }
+
+    private void WriteBatch(LogEntry firstEntry)
+    {
+        lock (_fallbackGate)
+        {
             using var stream = new FileStream(
                 _logFilePath,
                 FileMode.Append,
@@ -117,21 +133,13 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
                 FileOptions.SequentialScan);
             using var writer = new StreamWriter(stream);
 
-            foreach (var entry in _entries.GetConsumingEnumerable())
+            WriteEntry(writer, firstEntry);
+            while (_entries.TryTake(out var nextEntry))
             {
-                WriteEntry(writer, entry);
-                while (_entries.TryTake(out var nextEntry))
-                {
-                    WriteEntry(writer, nextEntry);
-                }
-
-                writer.Flush();
+                WriteEntry(writer, nextEntry);
             }
-        }
-        catch (Exception exception)
-        {
-            WriteFallback(new LogEntry(DateTimeOffset.Now, "ERROR", "Runtime logger worker failed.", exception));
-            // Logging must never break the tray app or script reload loop.
+
+            writer.Flush();
         }
     }
 
