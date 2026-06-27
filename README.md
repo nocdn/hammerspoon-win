@@ -13,7 +13,21 @@ Right-click the notification area icon:
 - **Open Config** — opens `%APPDATA%\HsWin\config.js` in your default editor (creates the default file first if missing).
 - **Reload Config** — reloads `config.js` on a background thread (shows reload toasts; same engine reset as startup reload).
 - **Start at Login** — toggles whether HsWin starts when you sign in to Windows.
+- **Install hspn CLI** — adds the installed app directory to your user `PATH` so new terminals can run `hspn` (shows installing and success/error toasts).
 - **Quit** — exits the app.
+
+## Command line
+
+The optional `hspn` CLI ships with the app but is not added to `PATH` until you choose **Install hspn CLI** from the tray menu. It installs per-user and does not require administrator elevation. Open a new terminal after installing so Windows picks up the updated `PATH`.
+
+```powershell
+hspn --help
+hspn config reload
+hspn config lint                                      # lints %APPDATA%\HsWin\config.js
+hspn config lint C:\Users\you\AppData\Roaming\HsWin\config.js
+```
+
+`hspn config reload` sends a command to the running tray app, so reload uses the same live runtime, hotkeys, hooks, logs, and toast path as the tray menu. `hspn config lint` validates a config file offline without touching the running app; by default it lints `%APPDATA%\HsWin\config.js`.
 
 ## Current API
 
@@ -555,7 +569,7 @@ Aliases for `suppressPhysicalModifiers` are `suppressModifiers` and `withoutModi
 
 ### `hs.timer.doAfter(delayMs, callback)`, `hs.timer.doEvery(intervalMs, callback)`
 
-Runs JavaScript callbacks later or repeatedly on the app dispatcher thread. Returned handles support `stop()`, `dispose()`, and `delete()`; config reload stops active timers automatically.
+Runs JavaScript callbacks later or repeatedly on the app dispatcher thread. Timer delays and intervals must be at least 1 millisecond. Returned handles support `stop()`, `dispose()`, and `delete()`; config reload stops active timers automatically.
 
 ```js
 hs.timer.doAfter(500, () => hs.alert.show("Half a second later"));
@@ -714,8 +728,10 @@ hs.hotkey.bind([], "pageup", () => {
 ## Projects
 
 - `src/HsWin.App`: WPF tray application, toast window, native hotkeys, keyboard hook, input injection, timers, clipboard, shell launching, audio/media control, startup integration, editor launching.
+- `src/HsWin.Cli`: `hspn` console executable for config reload and lint commands.
 - `src/HsWin.Core`: config file creation, alert contracts, service contracts, ClearScript runtime, and script-facing API wiring.
 - `tests/HsWin.Core.Tests`: parser, config, and JavaScript bridge tests.
+- `tests/HsWin.Cli.Tests`: command-line parser, help, and lint command behavior.
 - `tests/HsWin.App.Tests`: WPF-side constants and app-layer behavior that can be tested without fragile screenshots.
 
 ## Logs

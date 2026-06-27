@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Resolve-Path (Join-Path $scriptRoot "..")
 $projectPath = Join-Path $repoRoot "src\HsWin.App\HsWin.App.csproj"
+$cliProjectPath = Join-Path $repoRoot "src\HsWin.Cli\HsWin.Cli.csproj"
 $installerScriptPath = Join-Path $repoRoot "installer\HsWin.iss"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $publishDir = Join-Path $artifactsRoot "publish\HsWin.App\$Configuration\$RuntimeIdentifier"
@@ -95,6 +96,13 @@ New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 New-Item -ItemType Directory -Path $installerOutputDir -Force | Out-Null
 
 dotnet publish $projectPath `
+    --configuration $Configuration `
+    --runtime $RuntimeIdentifier `
+    --self-contained true `
+    --output $publishDir `
+    -p:PublishSingleFile=false
+
+dotnet publish $cliProjectPath `
     --configuration $Configuration `
     --runtime $RuntimeIdentifier `
     --self-contained true `

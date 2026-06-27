@@ -1,5 +1,6 @@
 using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
+using HsWin.Core.Commands;
 using HsWin.Core.Config;
 using HsWin.Core.Http;
 using HsWin.Core.Logging;
@@ -16,6 +17,7 @@ using HsWin.App.Shell;
 using HsWin.App.Timers;
 using HsWin.App.Windows;
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Windows.Threading;
 using WpfApplication = System.Windows.Application;
@@ -41,11 +43,14 @@ internal sealed class AppController : IDisposable
     private readonly NativeWindowService _windowService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
+    private readonly CliInstallService _cliInstallService;
+    private readonly HsWinCommandServer _commandServer;
     private readonly TrayIconService _trayIconService;
     private readonly Dispatcher _dispatcher;
     private readonly object _scriptReloadGate = new();
 
     private int _reloadGeneration;
+    private int _cliInstallInProgress;
     private bool _disposed;
 
     public AppController()
@@ -89,12 +94,19 @@ internal sealed class AppController : IDisposable
             Http = new SystemHttpService(_logger),
             Logger = _logger
         });
-        _startupService = new StartupService(AppBranding.DisplayName, ResolveExecutablePath(), "HsWin");
+        var executablePath = ResolveExecutablePath();
+        _startupService = new StartupService(AppBranding.DisplayName, executablePath, "HsWin");
+        _cliInstallService = new CliInstallService(
+            Path.GetDirectoryName(executablePath)
+            ?? throw new InvalidOperationException("Could not resolve the current executable directory."));
+        _commandServer = new HsWinCommandServer(HandleCommand, _logger);
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,
             reloadConfig: ReloadConfig,
             isStartAtLoginEnabled: _startupService.IsEnabled,
             setStartAtLoginEnabled: SetStartAtLoginEnabled,
+            isCliInstalled: _cliInstallService.IsInstalled,
+            installCli: InstallCli,
             quit: Quit);
     }
 
@@ -109,6 +121,8 @@ internal sealed class AppController : IDisposable
             var configStartedAt = Stopwatch.GetTimestamp();
             _configFileService.EnsureConfigFile();
             _logger.Info($"Startup config ensure completed elapsedMs={Stopwatch.GetElapsedTime(configStartedAt).TotalMilliseconds:F3}.");
+            _commandServer.Start();
+            _logger.Info("Command server started.");
             var trayStartedAt = Stopwatch.GetTimestamp();
             _trayIconService.Show();
             _logger.Info($"Tray icon shown elapsedMs={Stopwatch.GetElapsedTime(trayStartedAt).TotalMilliseconds:F3}.");
@@ -123,6 +137,22 @@ internal sealed class AppController : IDisposable
             _logger.Error("Startup failed.", exception);
             _toastPresenter.Show(AlertRequest.Create($"Startup failed: {exception.Message}", AlertKind.Error, 6000));
         }
+    }
+
+    private HsWinCommandResponse HandleCommand(HsWinCommandRequest request)
+    {
+        _logger.Info($"Command requested name='{request.Command}'.");
+        return request.Command switch
+        {
+            HsWinCommandNames.ConfigReload => HandleConfigReloadCommand(),
+            _ => HsWinCommandResponse.Error($"Unknown command: {request.Command}")
+        };
+    }
+
+    private HsWinCommandResponse HandleConfigReloadCommand()
+    {
+        ReloadConfig();
+        return HsWinCommandResponse.Ok("Config reload requested.");
     }
 
     public void OpenConfig()
@@ -223,6 +253,8 @@ internal sealed class AppController : IDisposable
 
         _trayIconService.Dispose();
         _logger.Info("Tray icon disposed.");
+        _commandServer.Dispose();
+        _logger.Info("Command server disposed.");
 
         lock (_scriptReloadGate)
         {
@@ -244,6 +276,68 @@ internal sealed class AppController : IDisposable
         _logger.Info("Single instance guard disposed.");
         _disposed = true;
         _logger.Dispose();
+    }
+
+    private void InstallCli()
+    {
+        if (Interlocked.Exchange(ref _cliInstallInProgress, 1) != 0)
+        {
+            _logger.Info("hspn CLI install request ignored because an install is already in progress.");
+            _toastPresenter.Show(CliInstallAlerts.CreateInstallingAlert());
+            return;
+        }
+
+        _logger.Info("hspn CLI install requested.");
+        _toastPresenter.Show(CliInstallAlerts.CreateInstallingAlert());
+
+        Task.Run(() =>
+        {
+            CliInstallResult? result = null;
+            Exception? failure = null;
+
+            try
+            {
+                result = _cliInstallService.Install();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            if (_disposed)
+            {
+                Interlocked.Exchange(ref _cliInstallInProgress, 0);
+                return;
+            }
+
+            _dispatcher.BeginInvoke(() => CompleteCliInstall(result, failure));
+        });
+    }
+
+    private void CompleteCliInstall(CliInstallResult? result, Exception? failure)
+    {
+        Interlocked.Exchange(ref _cliInstallInProgress, 0);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (failure is not null)
+        {
+            _logger.Error("Installing hspn CLI failed.", failure);
+            _toastPresenter.Show(CliInstallAlerts.CreateInstallFailedAlert(failure));
+            return;
+        }
+
+        if (result == CliInstallResult.AlreadyInstalled)
+        {
+            _logger.Info("hspn CLI already installed.");
+            _toastPresenter.Show(CliInstallAlerts.CreateAlreadyInstalledAlert());
+            return;
+        }
+
+        _logger.Info($"hspn CLI installed path='{_cliInstallService.CliPath}'.");
+        _toastPresenter.Show(CliInstallAlerts.CreateInstalledAlert());
     }
 
     private void SetStartAtLoginEnabled(bool enabled)

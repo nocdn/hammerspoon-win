@@ -30,7 +30,7 @@ internal sealed class KeyboardHookDispatchScope : IDisposable
         ArgumentNullException.ThrowIfNull(action);
 
         var scope = CurrentScope.Value;
-        if (scope is null)
+        if (scope is null || scope._disposed)
         {
             return false;
         }

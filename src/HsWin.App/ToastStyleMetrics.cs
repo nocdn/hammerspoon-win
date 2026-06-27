@@ -12,6 +12,7 @@ internal static class ToastStyleMetrics
     public const double DotTextGap = 10;
     public const double DotStateLeftPadding = 17;
     public const double DotStateRightPadding = 18;
+    public const double DotTranslateY = -0.75;
     public const double IconSlotSize = 14;
     public const double IconTextGap = 6;
     public const double IconStateLeftPadding = 13;

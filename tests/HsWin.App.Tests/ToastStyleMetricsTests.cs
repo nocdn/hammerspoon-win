@@ -20,6 +20,7 @@ public sealed class ToastStyleMetricsTests
     {
         Assert.Equal(6, ToastStyleMetrics.DotSize);
         Assert.Equal(10, ToastStyleMetrics.DotTextGap);
+        Assert.Equal(-0.75, ToastStyleMetrics.DotTranslateY);
         Assert.Equal(14, ToastStyleMetrics.IconSlotSize);
         Assert.Equal(14, ToastStyleMetrics.LoaderIconSize);
         Assert.Equal(6, ToastStyleMetrics.IconTextGap);

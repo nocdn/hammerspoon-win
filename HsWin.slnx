@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/HsWin.App/HsWin.App.csproj" />
+    <Project Path="src/HsWin.Cli/HsWin.Cli.csproj" />
     <Project Path="src/HsWin.Core/HsWin.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/HsWin.App.Tests/HsWin.App.Tests.csproj" />
+    <Project Path="tests/HsWin.Cli.Tests/HsWin.Cli.Tests.csproj" />
     <Project Path="tests/HsWin.Core.Tests/HsWin.Core.Tests.csproj" />
   </Folder>
 </Solution>

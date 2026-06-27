@@ -14,6 +14,7 @@
 - Prioritize a friendly, obvious JavaScript scripting experience. Users should not need timing hacks, Windows-hook knowledge, or defensive workarounds in their config scripts; handle fallbacks, edge cases, retries, and platform quirks inside the host wherever practical, and cover those behaviors with substantial focused tests.
 - Keep low-level input hooks off the WPF/UI dispatcher. Keyboard and mouse hooks should run on dedicated message-pump threads so startup UI work, toasts, timers, or script callbacks cannot delay physical input delivery.
 - Runtime diagnostics live under `%APPDATA%\HsWin\runtime-logs`; JavaScript `console.*` output lives under `%APPDATA%\HsWin\config-logs`.
+- The CLI includes `hspn config lint`, which catches config syntax/API mistakes such as invalid timer intervals. After making user config changes, run `hspn config lint` against the changed config; if lint reports anything, fix the config and rerun lint before handing work back. Also run a `hspn -h` so that you know some of the features of the CLI.
 - **After every code change**, before handing work back, run this full verification loop (do not skip steps):
   1. **Kill** any running `Hammerspoon (Windows Edition)` or `HsWin.App` instances so the old build is not left running.
   2. **Build:** `dotnet build HsWin.slnx`

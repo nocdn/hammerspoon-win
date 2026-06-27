@@ -46,6 +46,29 @@ public sealed class KeyboardInputServiceTests
         Assert.Contains(logger.Infos, info => info.Contains("deferred input completed", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void TapWithCapturedDisposedKeyboardHookDispatchSendsImmediately()
+    {
+        var logger = new CapturingRuntimeLogger();
+        var sender = new CapturingKeyboardInputSender();
+        var service = new KeyboardInputService(logger, sender);
+        ExecutionContext? capturedContext;
+
+        using (KeyboardHookDispatchScope.Enter(logger, "key='backspace' type='keydown' vk=0x08"))
+        {
+            capturedContext = ExecutionContext.Capture();
+        }
+
+        Assert.NotNull(capturedContext);
+        ExecutionContext.Run(capturedContext, _ => service.Tap(0x24, KeyboardTapOptions.Default), null);
+
+        var action = Assert.Single(sender.Actions);
+        Assert.Equal("tap:0x24", action);
+        Assert.DoesNotContain(
+            logger.Infos,
+            info => info.Contains("Keyboard remap input deferred", StringComparison.Ordinal));
+    }
+
     private sealed class CapturingKeyboardInputSender : IKeyboardInputSender
     {
         private readonly ManualResetEventSlim _actionSent = new();

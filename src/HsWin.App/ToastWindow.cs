@@ -49,6 +49,7 @@ internal sealed class ToastWindow : Window, IToastView
     private static readonly MediaBrush TextBrush = WpfBrushes.Black;
     private static readonly MediaBrush ErrorBrush = CreateFrozenBrush(WpfColor.FromRgb(242, 20, 26));
     private static readonly MediaBrush SuccessBrush = CreateFrozenBrush(WpfColor.FromRgb(22, 163, 74));
+    private static readonly Transform DotTransform = CreateFrozenTransform(0, ToastStyleMetrics.DotTranslateY);
     private static readonly DropShadowEffect PillShadow = CreatePillShadow();
     private static readonly Geometry LoaderGeometry = CreateLoaderGeometry();
 
@@ -204,6 +205,7 @@ internal sealed class ToastWindow : Window, IToastView
             Height = ToastStyleMetrics.DotSize,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            RenderTransform = DotTransform,
             Visibility = Visibility.Collapsed
         };
     }
@@ -259,6 +261,13 @@ internal sealed class ToastWindow : Window, IToastView
         var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
+    }
+
+    private static Transform CreateFrozenTransform(double x, double y)
+    {
+        var transform = new TranslateTransform(x, y);
+        transform.Freeze();
+        return transform;
     }
 
     private static Geometry CreateLoaderGeometry()
