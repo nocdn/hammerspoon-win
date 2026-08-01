@@ -100,14 +100,22 @@ dotnet publish $projectPath `
     --runtime $RuntimeIdentifier `
     --self-contained true `
     --output $publishDir `
-    -p:PublishSingleFile=false
+    -p:PublishSingleFile=false `
+    -p:Version=$Version `
+    -p:AssemblyVersion=$VersionInfoVersion `
+    -p:FileVersion=$VersionInfoVersion `
+    -p:InformationalVersion=$Version
 
 dotnet publish $cliProjectPath `
     --configuration $Configuration `
     --runtime $RuntimeIdentifier `
     --self-contained true `
     --output $publishDir `
-    -p:PublishSingleFile=false
+    -p:PublishSingleFile=false `
+    -p:Version=$Version `
+    -p:AssemblyVersion=$VersionInfoVersion `
+    -p:FileVersion=$VersionInfoVersion `
+    -p:InformationalVersion=$Version
 
 $iscc = Get-InnoSetupCompiler
 

@@ -58,6 +58,16 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         return RegisterOnOwnerThread(hotkey, pressed);
     }
 
+    public IDisposable RegisterHeld(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking)
+    {
+        if (!_threadInvoker.CheckAccess())
+        {
+            return _threadInvoker.Invoke(() => RegisterHeldOnOwnerThread(hotkey, pressed, released, blocking));
+        }
+
+        return RegisterHeldOnOwnerThread(hotkey, pressed, released, blocking);
+    }
+
     public void Dispose()
     {
         if (!_threadInvoker.CheckAccess())
@@ -95,6 +105,25 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         _callbacks[id] = pressed;
         _logger.Info($"Hotkey registered id={id}.");
         return new HotkeyRegistration(this, id);
+    }
+
+    private IDisposable RegisterHeldOnOwnerThread(
+        HotkeyDefinition hotkey,
+        Action pressed,
+        Action released,
+        bool blocking)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(hotkey);
+        ArgumentNullException.ThrowIfNull(pressed);
+        ArgumentNullException.ThrowIfNull(released);
+
+        if (hotkey.InputKind != HotkeyInputKind.MouseButton)
+        {
+            throw new ArgumentException("Held hotkey registration requires a mouse-button definition.", nameof(hotkey));
+        }
+
+        return _mouseHotkeys.RegisterHeld(hotkey, pressed, released, blocking);
     }
 
     private void DisposeOnOwnerThread()

@@ -88,6 +88,48 @@ public sealed class NativeMouseHotkeyHookTests
         Assert.Equal(1, scheduler.PostCount);
     }
 
+    [Fact]
+    public void HeldRegistrationDispatchesPressAndReleaseCallbacks()
+    {
+        var platform = new FakeMouseHookPlatform();
+        using var hook = new NativeMouseHotkeyHook(NullRuntimeLogger.Instance, platform, callbackContext: null);
+        var pressed = 0;
+        var released = 0;
+
+        using var registration = hook.RegisterHeld(
+            HotkeyDefinition.CreateMouseButton(HotkeyModifiers.None, HotkeyMouseButton.XButton1),
+            () => pressed++,
+            () => released++,
+            blocking: true);
+
+        Assert.True(platform.InstallCompleted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new IntPtr(1), platform.InvokeHook(0x020B, 0x0001u << 16));
+        Assert.Equal(new IntPtr(1), platform.InvokeHook(0x020C, 0x0001u << 16));
+        Assert.Equal(1, pressed);
+        Assert.Equal(1, released);
+    }
+
+    [Fact]
+    public void NonBlockingHeldRegistrationPassesMouseEventsThrough()
+    {
+        var platform = new FakeMouseHookPlatform();
+        using var hook = new NativeMouseHotkeyHook(NullRuntimeLogger.Instance, platform, callbackContext: null);
+        var pressed = 0;
+        var released = 0;
+
+        using var registration = hook.RegisterHeld(
+            HotkeyDefinition.CreateMouseButton(HotkeyModifiers.None, HotkeyMouseButton.XButton1),
+            () => pressed++,
+            () => released++,
+            blocking: false);
+
+        Assert.True(platform.InstallCompleted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(IntPtr.Zero, platform.InvokeHook(0x020B, 0x0001u << 16));
+        Assert.Equal(IntPtr.Zero, platform.InvokeHook(0x020C, 0x0001u << 16));
+        Assert.Equal(1, pressed);
+        Assert.Equal(1, released);
+    }
+
     private sealed class FakeMouseHookPlatform : IMouseHookPlatform
     {
         private readonly ManualResetEventSlim _quitSignal = new(false);
@@ -152,7 +194,7 @@ public sealed class NativeMouseHotkeyHookTests
 
         public IntPtr GetModuleHandle(string? moduleName) => new IntPtr(1);
 
-        public void InvokeHook(int message, uint mouseData)
+        public IntPtr InvokeHook(int message, uint mouseData)
         {
             if (_hookProcedure is null)
             {
@@ -168,7 +210,7 @@ public sealed class NativeMouseHotkeyHookTests
             try
             {
                 Marshal.StructureToPtr(hookData, pointer, false);
-                _hookProcedure(0, new IntPtr(message), pointer);
+                return _hookProcedure(0, new IntPtr(message), pointer);
             }
             finally
             {

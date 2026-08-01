@@ -12,4 +12,9 @@ public sealed class NullHotkeyRegistrar : IHotkeyRegistrar
     {
         throw new NotSupportedException("Hotkeys are not available in this runtime.");
     }
+
+    public IDisposable RegisterHeld(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking)
+    {
+        throw new NotSupportedException("Hotkeys are not available in this runtime.");
+    }
 }

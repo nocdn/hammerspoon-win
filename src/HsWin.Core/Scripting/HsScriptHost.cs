@@ -26,7 +26,7 @@ public sealed class HsScriptHost
             services.CallbackScheduler,
             callbacks,
             trackResource);
-        Mouse = new MouseScriptApi(services.Mouse, services.Logger);
+        Mouse = new MouseScriptApi(services.Mouse, services.MouseInput, services.Logger, trackResource);
         Windows = new WindowScriptApi(
             services.Windows,
             services.Logger,

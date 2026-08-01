@@ -49,10 +49,27 @@ public sealed class HotkeyScriptApi
             throw new ArgumentException("Held hotkey released callback must be a JavaScript function.", nameof(releasedFn));
         }
 
+        var parsedOptions = ParseHeldOptions(options);
         var definition = HotkeyParser.Parse(modifiers, key);
-        if (definition.InputKind != HotkeyInputKind.Keyboard)
+        if (definition.InputKind == HotkeyInputKind.MouseButton)
         {
-            throw new ArgumentException("Held hotkeys currently support keyboard keys only.", nameof(key));
+            if (parsedOptions.Repeat)
+            {
+                throw new ArgumentException("Mouse held hotkeys do not support repeat/retrigger.", nameof(options));
+            }
+
+            var mouseRegistration = _hotkeys.RegisterHeld(
+                definition,
+                () => _callbacks.InvokeScriptCallback(
+                    pressedFunction,
+                    SerializeMouseEvent(definition, "mousedown", isDown: true)),
+                () => _callbacks.InvokeScriptCallback(
+                    releasedFunction,
+                    SerializeMouseEvent(definition, "mouseup", isDown: false)),
+                parsedOptions.Blocking);
+            var mouseHandle = new ScriptResourceHandle(mouseRegistration);
+            _trackResource(mouseHandle);
+            return mouseHandle;
         }
 
         if (KeyboardKeyRules.IsModifierVirtualKey(definition.VirtualKey))
@@ -60,7 +77,6 @@ public sealed class HotkeyScriptApi
             throw new ArgumentException("Held hotkey key must be a non-modifier key.", nameof(key));
         }
 
-        var parsedOptions = ParseHeldOptions(options);
         var handler = new HeldHotkeyHandler(definition, parsedOptions, pressedFunction, releasedFunction, _callbacks);
         var watch = _keyboardEvents.Watch(
             new KeyboardEventWatchOptions(parsedOptions.IncludeInjected, parsedOptions.Blocking),
@@ -68,6 +84,25 @@ public sealed class HotkeyScriptApi
         var handle = new ScriptResourceHandle(watch);
         _trackResource(handle);
         return handle;
+    }
+
+    private static string SerializeMouseEvent(HotkeyDefinition definition, string type, bool isDown)
+    {
+        var button = definition.MouseButton switch
+        {
+            HotkeyMouseButton.Middle => "middle",
+            HotkeyMouseButton.XButton1 => "back",
+            HotkeyMouseButton.XButton2 => "forward",
+            _ => throw new ArgumentException("Mouse held hotkey requires a supported mouse button.", nameof(definition))
+        };
+
+        return ScriptJson.Serialize(new
+        {
+            type,
+            button,
+            isDown,
+            isUp = !isDown
+        });
     }
 
     private static HotkeyHeldOptions ParseHeldOptions(object? value)

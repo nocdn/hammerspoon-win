@@ -679,6 +679,14 @@
 
       isOnPrimaryScreen() {
         return host.Mouse.IsOnPrimaryScreen();
+      },
+
+      click(button) {
+        return host.Mouse.Click(button);
+      },
+
+      repeat(button, options) {
+        return host.Mouse.Repeat(button, options);
       }
     }),
 

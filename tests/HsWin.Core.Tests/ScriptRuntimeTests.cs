@@ -343,16 +343,35 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
-    public void HeldHotkeyRejectsMouseButtons()
+    public void HeldHotkeyRegistersMousePressAndReleaseCallbacks()
     {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
         using var runtime = new ScriptRuntime(new ScriptRuntimeServices
         {
-            KeyboardEvents = new CapturingKeyboardEventService()
+            Alerts = presenter,
+            Hotkeys = hotkeys
         });
 
-        var exception = Assert.ThrowsAny<Exception>(() =>
-            runtime.Reload("""hs.hotkey.bindHeld([], "mouse.middle", () => {}, () => {});"""));
-        Assert.Contains("keyboard keys only", exception.Message, StringComparison.Ordinal);
+        runtime.Reload("""
+            hs.hotkey.bindHeld([], "mouse.back", event => {
+              hs.alert.show(`${event.type}:${event.button}`, "normal", 1);
+            }, event => {
+              hs.alert.show(`${event.type}:${event.button}`, "normal", 1);
+            }, { blocking: false });
+            """);
+
+        var registration = Assert.Single(hotkeys.HeldRegistrations);
+        Assert.Equal(HotkeyMouseButton.XButton1, registration.Hotkey.MouseButton);
+        Assert.False(registration.Blocking);
+
+        registration.TriggerPressed();
+        registration.TriggerReleased();
+
+        Assert.Collection(
+            presenter.Requests,
+            request => Assert.Equal("mousedown:back", request.Text),
+            request => Assert.Equal("mouseup:back", request.Text));
     }
 
     [Fact]
@@ -1132,6 +1151,28 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesMouseClickAndRepeat()
+    {
+        var mouseInput = new CapturingMouseInputService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            MouseInput = mouseInput
+        });
+
+        runtime.Reload("""
+            hs.mouse.click("right");
+            const repeat = hs.mouse.repeat("right", { intervalMs: 20 });
+            repeat.stop();
+            """);
+
+        Assert.Equal([MouseButton.Right], mouseInput.Clicks);
+        var repeatRegistration = Assert.Single(mouseInput.Repeats);
+        Assert.Equal(MouseButton.Right, repeatRegistration.Button);
+        Assert.Equal(20, repeatRegistration.Options.IntervalMs);
+        Assert.True(repeatRegistration.Registration.IsDisposed);
+    }
+
+    [Fact]
     public void ReloadExposesFocusedWindowSnapshot()
     {
         var presenter = new CapturingAlertPresenter();
@@ -1725,10 +1766,19 @@ public sealed class ScriptRuntimeTests
     {
         public List<CapturingRegistration> Registrations { get; } = [];
 
+        public List<CapturingHeldRegistration> HeldRegistrations { get; } = [];
+
         public IDisposable Register(HotkeyDefinition hotkey, Action pressed)
         {
             var registration = new CapturingRegistration(hotkey, pressed);
             Registrations.Add(registration);
+            return registration;
+        }
+
+        public IDisposable RegisterHeld(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking)
+        {
+            var registration = new CapturingHeldRegistration(hotkey, pressed, released, blocking);
+            HeldRegistrations.Add(registration);
             return registration;
         }
 
@@ -1755,6 +1805,41 @@ public sealed class ScriptRuntimeTests
         public void Trigger()
         {
             _pressed();
+        }
+
+        public void Dispose()
+        {
+            IsDisposed = true;
+        }
+    }
+
+    private sealed class CapturingHeldRegistration : IDisposable
+    {
+        private readonly Action _pressed;
+        private readonly Action _released;
+
+        public CapturingHeldRegistration(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking)
+        {
+            Hotkey = hotkey;
+            _pressed = pressed;
+            _released = released;
+            Blocking = blocking;
+        }
+
+        public HotkeyDefinition Hotkey { get; }
+
+        public bool Blocking { get; }
+
+        public bool IsDisposed { get; private set; }
+
+        public void TriggerPressed()
+        {
+            _pressed();
+        }
+
+        public void TriggerReleased()
+        {
+            _released();
         }
 
         public void Dispose()
@@ -2183,6 +2268,30 @@ public sealed class ScriptRuntimeTests
             return _screen;
         }
     }
+
+    private sealed class CapturingMouseInputService : IMouseInputService
+    {
+        public List<MouseButton> Clicks { get; } = [];
+
+        public List<CapturingMouseRepeat> Repeats { get; } = [];
+
+        public void Click(MouseButton button)
+        {
+            Clicks.Add(button);
+        }
+
+        public IDisposable Repeat(MouseButton button, MouseRepeatOptions options)
+        {
+            var registration = new CapturingDisposable();
+            Repeats.Add(new CapturingMouseRepeat(button, options, registration));
+            return registration;
+        }
+    }
+
+    private sealed record CapturingMouseRepeat(
+        MouseButton Button,
+        MouseRepeatOptions Options,
+        CapturingDisposable Registration);
 
     private sealed class CapturingWindowService : IWindowService
     {

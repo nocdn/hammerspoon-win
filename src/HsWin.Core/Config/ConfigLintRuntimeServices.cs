@@ -36,6 +36,7 @@ internal static class ConfigLintRuntimeServices
             AudioDevices = LintAudioDeviceController.Instance,
             AudioCapture = LintAudioCaptureService.Instance,
             Mouse = NullMouseService.Instance,
+            MouseInput = NullMouseInputService.Instance,
             Windows = NullWindowService.Instance,
             Http = LintHttpService.Instance,
             Logger = NullRuntimeLogger.Instance
@@ -47,6 +48,9 @@ internal static class ConfigLintRuntimeServices
         public static LintHotkeyRegistrar Instance { get; } = new();
 
         public IDisposable Register(HotkeyDefinition hotkey, Action pressed) => NoopDisposable.Instance;
+
+        public IDisposable RegisterHeld(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking) =>
+            NoopDisposable.Instance;
     }
 
     private sealed class LintTimerService : IScriptTimerService

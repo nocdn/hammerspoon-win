@@ -30,7 +30,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     private readonly IMouseHookPlatform _platform;
     private readonly SynchronizationContext? _callbackContext;
     private readonly Dictionary<int, RegistrationState> _registrations = [];
-    private readonly HashSet<HotkeyMouseButton> _consumedButtons = [];
+    private readonly Dictionary<HotkeyMouseButton, RegistrationState> _activeRegistrations = [];
     private readonly MouseHookProcedure _hookProcedure;
     private IntPtr _hookHandle;
     private Thread? _hookThread;
@@ -57,9 +57,27 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
 
     public IDisposable Register(HotkeyDefinition hotkey, Action pressed)
     {
+        return RegisterInternal(hotkey, pressed, released: null, blocking: true);
+    }
+
+    public IDisposable RegisterHeld(HotkeyDefinition hotkey, Action pressed, Action released, bool blocking)
+    {
+        return RegisterInternal(hotkey, pressed, released, blocking);
+    }
+
+    private IDisposable RegisterInternal(
+        HotkeyDefinition hotkey,
+        Action pressed,
+        Action? released,
+        bool blocking)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(hotkey);
         ArgumentNullException.ThrowIfNull(pressed);
+        if (released is null && !blocking)
+        {
+            throw new ArgumentException("A non-blocking mouse hotkey must provide a release callback.", nameof(released));
+        }
 
         if (hotkey.InputKind != HotkeyInputKind.MouseButton || hotkey.MouseButton is null)
         {
@@ -76,8 +94,10 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
             EnsureHookInstalled();
 
             var id = _nextId++;
-            _registrations[id] = new RegistrationState(id, hotkey, pressed);
-            _logger.Info($"Mouse hotkey registered id={id} modifiers=0x{(uint)hotkey.Modifiers:X} button={hotkey.MouseButton}.");
+            _registrations[id] = new RegistrationState(id, hotkey, pressed, released, blocking);
+            _logger.Info(
+                $"Mouse hotkey registered id={id} modifiers=0x{(uint)hotkey.Modifiers:X} button={hotkey.MouseButton} " +
+                $"held={released is not null} blocking={blocking}.");
             return new MouseHotkeyRegistration(this, id);
         }
     }
@@ -92,7 +112,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         lock (_gate)
         {
             _registrations.Clear();
-            _consumedButtons.Clear();
+            _activeRegistrations.Clear();
             UninstallHook();
             _disposed = true;
         }
@@ -153,16 +173,22 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     {
         if (!mouseButtonEvent.IsDown)
         {
+            RegistrationState? activeRegistration;
             lock (_gate)
             {
-                if (!_consumedButtons.Remove(mouseButtonEvent.Button))
+                if (!_activeRegistrations.Remove(mouseButtonEvent.Button, out activeRegistration))
                 {
                     return false;
                 }
             }
 
             _logger.Info($"Mouse hotkey button-up consumed button={mouseButtonEvent.Button}.");
-            return true;
+            if (activeRegistration.Released is not null)
+            {
+                DispatchCallback(activeRegistration.Released);
+            }
+
+            return activeRegistration.Blocking;
         }
 
         var pressedModifiers = ReadPressedModifiers();
@@ -178,12 +204,12 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
                 return false;
             }
 
-            _consumedButtons.Add(mouseButtonEvent.Button);
+            _activeRegistrations[mouseButtonEvent.Button] = match;
         }
 
         _logger.Info($"Mouse hotkey dispatched id={match.Id} modifiers=0x{(uint)pressedModifiers:X} button={mouseButtonEvent.Button}.");
         DispatchCallback(match.Pressed);
-        return true;
+        return match.Blocking;
     }
 
     private void DispatchCallback(Action callback)
@@ -287,7 +313,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
             _logger.Info($"Mouse hotkey unregistered id={id}.");
             if (_registrations.Count == 0)
             {
-                _consumedButtons.Clear();
+                _activeRegistrations.Clear();
                 UninstallHook();
             }
         }
@@ -381,7 +407,12 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         public int Y;
     }
 
-    private sealed record RegistrationState(int Id, HotkeyDefinition Hotkey, Action Pressed);
+    private sealed record RegistrationState(
+        int Id,
+        HotkeyDefinition Hotkey,
+        Action Pressed,
+        Action? Released,
+        bool Blocking);
 
     private sealed class MouseHotkeyRegistration : IDisposable
     {

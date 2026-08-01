@@ -14,6 +14,7 @@ Right-click the notification area icon:
 - **Reload Config** — reloads `config.js` on a background thread (shows reload toasts; same engine reset as startup reload).
 - **Start at Login** — toggles whether HsWin starts when you sign in to Windows.
 - **Install hspn CLI** — adds the installed app directory to your user `PATH` so new terminals can run `hspn` (shows installing and success/error toasts).
+- **Version** — shows the version of the currently running HsWin process.
 - **Quit** — exits the app.
 
 ## Command line
@@ -239,7 +240,7 @@ Supported modifiers are `alt`, `option`, `opt`, `ctrl`, `control`, `shift`, `cmd
 
 ### `hs.hotkey.bindHeld(modifiers, key, pressedFn, releasedFn, options?)`, `hs.hotkey.whileHeld(...)`
 
-Runs `pressedFn(event)` once when a keyboard hotkey is pressed and `releasedFn(event)` when the key is released or a required modifier is released. This is the ergonomic wrapper for press-and-hold workflows such as recording only while a hotkey is held.
+Runs `pressedFn(event)` once when a keyboard hotkey or supported mouse button is pressed, and `releasedFn(event)` when it is released. This is the ergonomic wrapper for press-and-hold workflows such as recording only while a hotkey is held.
 
 ```js
 let recording = null;
@@ -263,7 +264,22 @@ hs.hotkey.bindHeld(["ctrl", "alt"], "space", () => {
 });
 ```
 
-Held hotkeys support keyboard keys, not mouse buttons. Options are `blocking`/`swallow` (default `true`), `includeInjected` (default `false`), `allowExtraModifiers` (default `false`), and `repeat` (default `false`). Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes them automatically.
+Mouse buttons use the same API:
+
+```js
+let repeat = null;
+
+hs.hotkey.bindHeld([], "mouse.back", () => {
+  repeat = hs.mouse.repeat("right", { intervalMs: 20 });
+}, () => {
+  if (repeat) {
+    repeat.stop();
+    repeat = null;
+  }
+}, { blocking: false });
+```
+
+Mouse held callbacks support `blocking`/`swallow` (default `true`). Set it to `false` when the physical button should continue through to the active application, such as preserving the browser Back action outside a game. Keyboard-only options are `includeInjected` (default `false`), `allowExtraModifiers` (default `false`), and `repeat` (default `false`). Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes them automatically.
 
 If a hotkey, keyboard-watch, or timer callback throws, the runtime shows an error toast instead of crashing the host.
 
@@ -464,6 +480,17 @@ const meter = hs.audio.levels({ intervalMs: 100 }, event => {
 });
 
 hs.timer.doAfter(3000, () => meter.stop());
+```
+
+### `hs.mouse.click(button)`, `hs.mouse.repeat(button, options?)`
+
+Sends a native mouse click at the current cursor position, or starts a native repeat loop. Supported buttons are `left`, `right`, `middle`, `back`/`xbutton1`, and `forward`/`xbutton2`, with `button1` through `button5` and `mouse.*` aliases. `repeat` starts with one immediate click and accepts `intervalMs`/`interval` from `1` to `1000` milliseconds. The optional `inputMethod` is `sendInput` (the default global Windows input path) or `windowMessage` (posts button messages to the focused window). The repeat handle supports `stop()`, `dispose()`, and `delete()`; config reload and the matching held-button release stop it automatically.
+
+```js
+hs.mouse.click("right");
+
+const repeat = hs.mouse.repeat("right", { intervalMs: 20, inputMethod: "windowMessage" });
+hs.timer.doAfter(1000, () => repeat.stop());
 ```
 
 ### `hs.mouse.getCurrentScreen()`, `hs.mouse.isOnPrimaryScreen()`

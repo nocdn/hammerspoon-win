@@ -34,6 +34,7 @@ internal sealed class AppController : IDisposable
     private readonly NativeHotkeyService _hotkeyService;
     private readonly NativeKeyboardEventService _keyboardEventService;
     private readonly KeyboardInputService _keyboardInputService;
+    private readonly MouseInputService _mouseInputService;
     private readonly DispatcherScriptTimerService _timerService;
     private readonly NativeClipboardService _clipboardService;
     private readonly ProcessShellService _shellService;
@@ -64,6 +65,7 @@ internal sealed class AppController : IDisposable
         _hotkeyService = new NativeHotkeyService(_logger);
         _keyboardEventService = new NativeKeyboardEventService(_logger);
         _keyboardInputService = new KeyboardInputService(_logger);
+        _mouseInputService = new MouseInputService(_logger);
         _timerService = new DispatcherScriptTimerService(WpfApplication.Current.Dispatcher);
         _clipboardService = new NativeClipboardService(WpfApplication.Current.Dispatcher, _logger);
         _shellService = new ProcessShellService(_logger);
@@ -83,6 +85,7 @@ internal sealed class AppController : IDisposable
             Media = new NativeMediaController(_logger),
             KeyboardEvents = _keyboardEventService,
             KeyboardInput = _keyboardInputService,
+            MouseInput = _mouseInputService,
             Timers = _timerService,
             CallbackScheduler = new DispatcherScriptCallbackScheduler(WpfApplication.Current.Dispatcher),
             Clipboard = _clipboardService,

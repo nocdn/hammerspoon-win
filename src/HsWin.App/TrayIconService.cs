@@ -44,6 +44,10 @@ internal sealed class TrayIconService : IDisposable
         contextMenu.Items.Add(_installCliItem);
 
         contextMenu.Items.Add(new ToolStripSeparator());
+        contextMenu.Items.Add(new ToolStripMenuItem($"Version {AppBranding.Version}")
+        {
+            Enabled = false
+        });
         contextMenu.Items.Add(new ToolStripMenuItem("Quit", image: null, onClick: (_, _) => quit()));
         contextMenu.Opening += (_, _) => RefreshMenuState();
 
