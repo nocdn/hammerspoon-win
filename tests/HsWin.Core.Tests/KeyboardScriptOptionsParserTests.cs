@@ -36,6 +36,9 @@ public sealed class KeyboardScriptOptionsParserTests
     [InlineData("synchronous")]
     [InlineData("sync")]
     [InlineData("swallow")]
+    [InlineData("preventDefault")]
+    [InlineData("prevent")]
+    [InlineData("capture")]
     public void ParseWatchOptionsReadsBlockingAliases(string optionName)
     {
         var options = KeyboardScriptOptionsParser.ParseWatchOptions(

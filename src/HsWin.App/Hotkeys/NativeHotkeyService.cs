@@ -39,14 +39,28 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
         IRuntimeLogger logger,
         IHotkeyThreadInvoker threadInvoker,
         IHotkeyPlatform platform)
+        : this(logger, threadInvoker, platform, mouseHotkeys: null)
+    {
+    }
+
+    internal NativeHotkeyService(
+        IRuntimeLogger logger,
+        IHotkeyThreadInvoker threadInvoker,
+        IHotkeyPlatform platform,
+        NativeMouseHotkeyHook? mouseHotkeys)
     {
         _logger = logger;
         _threadInvoker = threadInvoker;
         _platform = platform;
-        _mouseHotkeys = new NativeMouseHotkeyHook(_logger);
+        _mouseHotkeys = mouseHotkeys ?? new NativeMouseHotkeyHook(_logger);
         _window = new MessageWindow(DispatchHotkey);
         _logger.Info($"Hotkey message window created. HWND=0x{_window.Handle.ToInt64():X}");
     }
+
+    /// <summary>
+    /// Shared low-level mouse hook used for button hotkeys and scroll watches.
+    /// </summary>
+    internal NativeMouseHotkeyHook MouseHook => _mouseHotkeys;
 
     public IDisposable Register(HotkeyDefinition hotkey, Action pressed)
     {

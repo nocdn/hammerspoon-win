@@ -14,7 +14,15 @@ public static class KeyboardScriptOptionsParser
         }
 
         var includeInjected = ScriptArgumentReader.GetPropertyValue(value, "includeInjected");
-        var blocking = ScriptArgumentReader.GetPropertyValue(value, "blocking", "synchronous", "sync", "swallow");
+        var blocking = ScriptArgumentReader.GetPropertyValue(
+            value,
+            "blocking",
+            "synchronous",
+            "sync",
+            "swallow",
+            "preventDefault",
+            "prevent",
+            "capture");
         var keys = ScriptArgumentReader.GetPropertyValue(value, "keys", "key", "keyCodes", "keyCode");
         return new KeyboardEventWatchOptions(
             ScriptArgumentReader.IsMissing(includeInjected)

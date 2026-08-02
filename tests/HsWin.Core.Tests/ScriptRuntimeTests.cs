@@ -1173,6 +1173,63 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadExposesMouseScrollWatch()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var mouseEvents = new CapturingMouseEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            MouseEvents = mouseEvents
+        });
+
+        runtime.Reload("""
+            hs.mouse.watchScroll(event => {
+              hs.alert.show(`${event.type}:${event.axis}:${event.direction}:${event.delta}`, "normal", 1);
+              return event.direction === "up";
+            }, { blocking: true, axes: "vertical" });
+            """);
+
+        var watch = Assert.Single(mouseEvents.Watches);
+        Assert.True(watch.Options.Blocking);
+        Assert.Equal(MouseScrollAxis.Vertical, watch.Options.Axes);
+
+        var swallow = watch.Callback(new MouseScrollEventSnapshot(
+            MouseScrollEventSnapshot.ScrollType,
+            MouseScrollEventSnapshot.VerticalAxis,
+            MouseScrollEventSnapshot.DirectionUp,
+            Delta: 120,
+            Notches: 1,
+            IsVertical: true,
+            IsHorizontal: false,
+            IsInjected: false,
+            Modifiers: [],
+            ModifierFlags: 0,
+            X: 10,
+            Y: 20));
+
+        Assert.True(swallow);
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("scroll:vertical:up:120", request.Text);
+    }
+
+    [Fact]
+    public void ReloadDisposesPreviousMouseScrollWatchers()
+    {
+        var mouseEvents = new CapturingMouseEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            MouseEvents = mouseEvents
+        });
+
+        runtime.Reload("""hs.mouse.watchScroll(() => false);""");
+        var watch = Assert.Single(mouseEvents.Watches).Registration;
+        runtime.Reload("""console.log("new");""");
+
+        Assert.True(watch.IsDisposed);
+    }
+
+    [Fact]
     public void ReloadExposesFocusedWindowSnapshot()
     {
         var presenter = new CapturingAlertPresenter();
@@ -2287,6 +2344,23 @@ public sealed class ScriptRuntimeTests
             return registration;
         }
     }
+
+    private sealed class CapturingMouseEventService : IMouseEventService
+    {
+        public List<CapturingMouseScrollWatch> Watches { get; } = [];
+
+        public IDisposable WatchScroll(MouseScrollWatchOptions options, Func<MouseScrollEventSnapshot, bool> callback)
+        {
+            var registration = new CapturingDisposable();
+            Watches.Add(new CapturingMouseScrollWatch(options, callback, registration));
+            return registration;
+        }
+    }
+
+    private sealed record CapturingMouseScrollWatch(
+        MouseScrollWatchOptions Options,
+        Func<MouseScrollEventSnapshot, bool> Callback,
+        CapturingDisposable Registration);
 
     private sealed record CapturingMouseRepeat(
         MouseButton Button,

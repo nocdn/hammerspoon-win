@@ -493,6 +493,65 @@ const repeat = hs.mouse.repeat("right", { intervalMs: 20, inputMethod: "windowMe
 hs.timer.doAfter(1000, () => repeat.stop());
 ```
 
+### `hs.mouse.watchScroll(callback, options?)`
+
+Subscribes to global mouse wheel events (vertical wheel and horizontal tilt wheel). Watchers are non-blocking by default: callbacks run off the Windows low-level mouse hook path, so they can observe scrolling without delaying it. Non-blocking callbacks cannot swallow input; returning `true` is ignored and logged as a warning.
+
+To **prevent the focused app from seeing the scroll** (for example so Minecraft does not change inventory slots while an auto-clicker owns the wheel), enable swallow mode and `return true` from the callback:
+
+- Options: `{ blocking: true }`, or the aliases `{ swallow: true }`, `{ preventDefault: true }`, `{ prevent: true }`, `{ capture: true }`
+- Callback: `return true` swallows that event; `return false` (or nothing useful) lets it pass through to the app
+
+Swallow mode runs on the mouse hook path, so keep heavy work in `hs.timer.doAfter`, `hs.task.run`, or a hotkey callback. Prefer conditional swallow: only return `true` while your feature is active, so normal scrolling still works the rest of the time.
+
+```js
+// Observe all scroll events without affecting apps.
+hs.mouse.watchScroll(event => {
+  console.log(event.direction, event.delta, event.axis, event.x, event.y);
+});
+
+// Only vertical wheel; swallow while a custom mode is active.
+let turboClickActive = false;
+let clickIntervalMs = 20;
+
+hs.mouse.watchScroll(event => {
+  if (!turboClickActive || event.axis !== "vertical") {
+    return false; // pass scroll through to the game/app
+  }
+
+  // Scroll up => faster clicks (lower interval), scroll down => slower.
+  const stepMs = event.direction === "up" ? -5 : 5;
+  clickIntervalMs = Math.min(1000, Math.max(1, clickIntervalMs + stepMs));
+  // Keep blocking callbacks tiny — schedule UI off the hook path.
+  hs.timer.doAfter(1, () => {
+    hs.alert.show(`Click every ${clickIntervalMs}ms`, { type: "normal", durationMs: 600 });
+  });
+  return true; // swallow: app never receives this wheel tick
+}, { preventDefault: true, axes: "vertical" });
+```
+
+Each event has:
+
+- `type` — always `"scroll"`
+- `axis` — `"vertical"` or `"horizontal"`
+- `direction` — `"up"` / `"down"` for vertical, `"left"` / `"right"` for horizontal
+- `delta` — signed Windows wheel delta (one notch is typically `120`; positive means up/away or right)
+- `notches` — `delta / 120` (can be fractional for high-resolution wheels)
+- `isVertical` / `isHorizontal` / `isInjected`
+- `modifiers` / `modifierFlags` — keyboard modifiers held at the time of the scroll
+- `x` / `y` — cursor position in virtual desktop pixels (can be negative on multi-monitor setups)
+
+Options:
+
+- `includeInjected` (default `false`) — also receive synthetic/injected wheel events
+- `blocking` / `swallow` / `preventDefault` / `prevent` / `capture` (default `false`) — run on the hook path and honor `return true` to swallow so the active app does not receive the scroll
+- `axes` / `axis` — `"vertical"`, `"horizontal"`, `"both"` (default), or an array such as `["vertical"]` (aliases include `v`/`y`/`wheel` and `h`/`x`/`tilt`)
+- `prepend` / `priority` / `first` (default `false`) — register this watcher ahead of existing ones
+
+Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes them automatically. The low-level mouse hook is shared with mouse-button hotkeys and is installed only while at least one mouse hotkey or scroll watcher is registered.
+
+**Watcher order:** callbacks run in registration order. The first blocking watcher that returns `true` swallows the event and later watchers are skipped. Non-blocking watchers registered *before* that blocker still get scheduled. Use `{ prepend: true }` to insert a watcher at the front of the list.
+
 ### `hs.mouse.getCurrentScreen()`, `hs.mouse.isOnPrimaryScreen()`
 
 Returns the Windows monitor containing the current mouse cursor, or `null` if the host cannot resolve it.
@@ -517,7 +576,7 @@ Screen snapshots have `id`, `name`, `isPrimary`, `mousePosition`, `bounds`, and 
 
 Subscribes to global keyboard events. Watchers are non-blocking by default: callbacks run off the Windows keyboard hook path, so they can observe input without delaying keystrokes. Non-blocking callbacks cannot swallow input; returning `true` is ignored and logged as a warning.
 
-Use `{ blocking: true }` only for watchers that must return `true` to swallow the physical event so the active app does not receive it. Blocking watchers run on the keyboard hook path, so keep slow work in `hs.timer.doAfter`, `hs.task.run`, or a normal hotkey callback. For simple key-to-key remaps, prefer `hs.keyboard.remap(fromKey, toKey)` so the hook path stays native and fast.
+Use `{ blocking: true }` (aliases: `swallow`, `preventDefault`, `prevent`, `capture`) only for watchers that must return `true` to swallow the physical event so the active app does not receive it. Blocking watchers run on the keyboard hook path, so keep slow work in `hs.timer.doAfter`, `hs.task.run`, or a normal hotkey callback. For simple key-to-key remaps, prefer `hs.keyboard.remap(fromKey, toKey)` so the hook path stays native and fast.
 
 ```js
 const watcher = hs.keyboard.watch(event => {
@@ -531,7 +590,7 @@ const blocker = hs.keyboard.watch(event => {
   }
 
   return false;
-}, { blocking: true });
+}, { preventDefault: true });
 
 const pageWatcher = hs.keyboard.watch(event => {
   console.log("Navigation key", event.key, event.type);
@@ -553,7 +612,7 @@ Options:
 | Option | Default | Description |
 | --- | --- | --- |
 | `includeInjected` | `false` | When `true`, callbacks also receive synthetic events. |
-| `blocking` | `false` | When `true`, the callback runs synchronously on the keyboard hook path and may return `true` to swallow the event. Aliases are `synchronous`, `sync`, and `swallow`. |
+| `blocking` | `false` | When `true`, the callback runs synchronously on the keyboard hook path and may return `true` to swallow the event. Aliases are `synchronous`, `sync`, `swallow`, `preventDefault`, `prevent`, and `capture`. |
 | `key` / `keys` | all keys | Restricts the watcher to one key or an array of keys. Values can be key names or numeric virtual-key codes. Use this for blocking watchers whenever possible so unrelated keypresses never enter JavaScript on the hook path. Aliases are `keyCode` and `keyCodes`. |
 
 ### `hs.keyboard.remap(sourceKey, targetKey)`
@@ -750,6 +809,7 @@ hs.hotkey.bind([], "pageup", () => {
 // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
 // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
 // hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));
+// hs.mouse.watchScroll(event => console.log(event.direction, event.delta));
 ```
 
 ## Projects

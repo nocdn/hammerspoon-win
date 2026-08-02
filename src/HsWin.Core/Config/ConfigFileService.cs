@@ -155,6 +155,7 @@ public sealed class ConfigFileService
         // hs.hotkey.bind(["ctrl", "alt"], "mouse.middle", () => hs.alert.show("Middle mouse"));
         // hs.hotkey.bind([], "mouse.back", () => hs.alert.show("Thumb back"));
         // hs.hotkey.bind([], "mouse.forward", () => hs.alert.show("Thumb forward"));
+        // hs.mouse.watchScroll(event => console.log(event.direction, event.delta));
         """;
 
     public ConfigFileService(string configFilePath)

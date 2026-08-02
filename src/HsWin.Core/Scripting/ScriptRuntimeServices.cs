@@ -46,6 +46,8 @@ public sealed record ScriptRuntimeServices
 
     public IMouseInputService MouseInput { get; init; } = NullMouseInputService.Instance;
 
+    public IMouseEventService MouseEvents { get; init; } = NullMouseEventService.Instance;
+
     public IHttpService Http { get; init; } = NullHttpService.Instance;
 
     public IWindowService Windows { get; init; } = NullWindowService.Instance;

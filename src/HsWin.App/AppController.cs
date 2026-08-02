@@ -41,6 +41,7 @@ internal sealed class AppController : IDisposable
     private readonly NativeAudioDeviceController _audioDeviceController;
     private readonly NativeAudioCaptureService _audioCaptureService;
     private readonly NativeMouseService _mouseService;
+    private readonly NativeMouseEventService _mouseEventService;
     private readonly NativeWindowService _windowService;
     private readonly ScriptRuntime _scriptRuntime;
     private readonly StartupService _startupService;
@@ -72,6 +73,8 @@ internal sealed class AppController : IDisposable
         _audioDeviceController = new NativeAudioDeviceController(_logger);
         _audioCaptureService = new NativeAudioCaptureService(paths.RecordingDirectory, _logger);
         _mouseService = new NativeMouseService();
+        // Share the single WH_MOUSE_LL host with mouse-button hotkeys (no second global hook).
+        _mouseEventService = new NativeMouseEventService(_hotkeyService.MouseHook);
         _dispatcher = WpfApplication.Current.Dispatcher;
         _windowService = new NativeWindowService(
             _logger,
@@ -86,6 +89,7 @@ internal sealed class AppController : IDisposable
             KeyboardEvents = _keyboardEventService,
             KeyboardInput = _keyboardInputService,
             MouseInput = _mouseInputService,
+            MouseEvents = _mouseEventService,
             Timers = _timerService,
             CallbackScheduler = new DispatcherScriptCallbackScheduler(WpfApplication.Current.Dispatcher),
             Clipboard = _clipboardService,
@@ -269,6 +273,7 @@ internal sealed class AppController : IDisposable
         _logger.Info("Hotkey service disposed.");
         _keyboardEventService.Dispose();
         _logger.Info("Keyboard event service disposed.");
+        // Mouse scroll watches live on the hotkey mouse hook; disposing hotkeys tears them down.
         _clipboardService.Dispose();
         _logger.Info("Clipboard service disposed.");
         _windowService.Dispose();

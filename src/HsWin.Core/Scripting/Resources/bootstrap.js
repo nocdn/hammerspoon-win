@@ -687,6 +687,14 @@
 
       repeat(button, options) {
         return host.Mouse.Repeat(button, options);
+      },
+
+      watchScroll(callback, options) {
+        if (typeof callback !== "function") {
+          throw new Error("Mouse scroll watch callback must be a function.");
+        }
+
+        return host.Mouse.WatchScroll((eventJson) => callback(parseJson(eventJson)) === true, options);
       }
     }),
 

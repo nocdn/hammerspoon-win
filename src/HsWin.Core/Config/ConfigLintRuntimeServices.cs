@@ -37,6 +37,7 @@ internal static class ConfigLintRuntimeServices
             AudioCapture = LintAudioCaptureService.Instance,
             Mouse = NullMouseService.Instance,
             MouseInput = NullMouseInputService.Instance,
+            MouseEvents = NullMouseEventService.Instance,
             Windows = NullWindowService.Instance,
             Http = LintHttpService.Instance,
             Logger = NullRuntimeLogger.Instance

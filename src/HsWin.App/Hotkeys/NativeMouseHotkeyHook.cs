@@ -1,22 +1,32 @@
+using HsWin.App.Mouse;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
+using HsWin.Core.Mouse;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace HsWin.App.Hotkeys;
 
+/// <summary>
+/// Single WH_MOUSE_LL host for mouse-button hotkeys and scroll watches. One dedicated
+/// message-pump thread owns the hook so physical input is not delayed by the UI dispatcher.
+/// </summary>
 internal sealed class NativeMouseHotkeyHook : IDisposable
 {
     private const int HcAction = 0;
     private const int WhMouseLl = 14;
     private const int WmMButtonDown = 0x0207;
     private const int WmMButtonUp = 0x0208;
+    private const int WmMouseWheel = 0x020A;
     private const int WmXButtonDown = 0x020B;
     private const int WmXButtonUp = 0x020C;
+    private const int WmMouseHWheel = 0x020E;
     private const int WmQuit = 0x0012;
     private const int XButton1 = 0x0001;
     private const int XButton2 = 0x0002;
+    private const uint LlmhfInjected = 0x00000001;
     private const int VkShift = 0x10;
     private const int VkControl = 0x11;
     private const int VkMenu = 0x12;
@@ -29,14 +39,17 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     private readonly IRuntimeLogger _logger;
     private readonly IMouseHookPlatform _platform;
     private readonly SynchronizationContext? _callbackContext;
+    private readonly MouseScrollWatchDispatcher _scrollDispatcher;
     private readonly Dictionary<int, RegistrationState> _registrations = [];
     private readonly Dictionary<HotkeyMouseButton, RegistrationState> _activeRegistrations = [];
+    private readonly List<MouseScrollWatchSubscription> _scrollSubscriptions = [];
     private readonly MouseHookProcedure _hookProcedure;
     private IntPtr _hookHandle;
     private Thread? _hookThread;
     private uint _hookThreadId;
     private Exception? _hookInstallException;
     private int _nextId = 1;
+    private long _nextScrollSubscriptionId;
     private bool _disposed;
 
     public NativeMouseHotkeyHook(IRuntimeLogger logger)
@@ -47,11 +60,16 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     internal NativeMouseHotkeyHook(
         IRuntimeLogger logger,
         IMouseHookPlatform platform,
-        SynchronizationContext? callbackContext)
+        SynchronizationContext? callbackContext,
+        MouseScrollWatchDispatcher? scrollDispatcher = null)
     {
         _logger = logger;
         _platform = platform;
         _callbackContext = callbackContext;
+        _scrollDispatcher = scrollDispatcher
+            ?? new MouseScrollWatchDispatcher(
+                logger,
+                new SynchronizationContextMouseScrollWatchCallbackScheduler(callbackContext));
         _hookProcedure = HookCallback;
     }
 
@@ -65,13 +83,44 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         return RegisterInternal(hotkey, pressed, released, blocking);
     }
 
+    public IDisposable WatchScroll(MouseScrollWatchOptions options, Func<MouseScrollEventSnapshot, bool> callback)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(callback);
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            EnsureHookInstalled();
+
+            var subscription = new MouseScrollWatchSubscription(
+                Interlocked.Increment(ref _nextScrollSubscriptionId),
+                options,
+                callback,
+                RemoveScrollSubscription);
+            if (options.Prepend)
+            {
+                _scrollSubscriptions.Insert(0, subscription);
+            }
+            else
+            {
+                _scrollSubscriptions.Add(subscription);
+            }
+
+            _logger.Info(
+                $"Mouse scroll watch registered id={subscription.Id} includeInjected={options.IncludeInjected} " +
+                $"blocking={options.Blocking} prepend={options.Prepend} axes={FormatAxes(options.Axes)} " +
+                $"scrollCount={_scrollSubscriptions.Count} hotkeyCount={_registrations.Count}.");
+            return subscription;
+        }
+    }
+
     private IDisposable RegisterInternal(
         HotkeyDefinition hotkey,
         Action pressed,
         Action? released,
         bool blocking)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(hotkey);
         ArgumentNullException.ThrowIfNull(pressed);
         if (released is null && !blocking)
@@ -86,6 +135,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
 
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (HasDuplicateRegistration(hotkey))
             {
                 throw new InvalidOperationException($"Mouse hotkey {hotkey} is already registered.");
@@ -111,6 +161,12 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
 
         lock (_gate)
         {
+            foreach (var subscription in _scrollSubscriptions.ToArray())
+            {
+                subscription.MarkDisposed();
+            }
+
+            _scrollSubscriptions.Clear();
             _registrations.Clear();
             _activeRegistrations.Clear();
             UninstallHook();
@@ -154,12 +210,75 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         return false;
     }
 
+    internal static bool TryCreateScrollEvent(
+        int message,
+        uint mouseData,
+        uint flags,
+        int x,
+        int y,
+        HotkeyModifiers pressedModifiers,
+        out MouseScrollEventSnapshot snapshot)
+    {
+        snapshot = default!;
+
+        var isVertical = message == WmMouseWheel;
+        var isHorizontal = message == WmMouseHWheel;
+        if (!isVertical && !isHorizontal)
+        {
+            return false;
+        }
+
+        // High-order word of mouseData is a signed wheel delta (WHEEL_DELTA units).
+        var delta = unchecked((short)((mouseData >> 16) & 0xFFFF));
+        if (delta == 0)
+        {
+            return false;
+        }
+
+        var axis = isVertical
+            ? MouseScrollEventSnapshot.VerticalAxis
+            : MouseScrollEventSnapshot.HorizontalAxis;
+        var direction = isVertical
+            ? (delta > 0 ? MouseScrollEventSnapshot.DirectionUp : MouseScrollEventSnapshot.DirectionDown)
+            : (delta > 0 ? MouseScrollEventSnapshot.DirectionRight : MouseScrollEventSnapshot.DirectionLeft);
+        var isInjected = (flags & LlmhfInjected) != 0;
+        var notches = delta / (double)MouseScrollEventSnapshot.WheelDelta;
+
+        snapshot = new MouseScrollEventSnapshot(
+            Type: MouseScrollEventSnapshot.ScrollType,
+            Axis: axis,
+            Direction: direction,
+            Delta: delta,
+            Notches: notches,
+            IsVertical: isVertical,
+            IsHorizontal: isHorizontal,
+            IsInjected: isInjected,
+            Modifiers: KeyboardKeyRules.GetModifierNames(pressedModifiers),
+            ModifierFlags: (uint)pressedModifiers,
+            X: x,
+            Y: y);
+        return true;
+    }
+
     private IntPtr HookCallback(int code, IntPtr wParam, IntPtr lParam)
     {
-        if (code == HcAction)
+        if (code != HcAction)
+        {
+            return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
+        }
+
+        var message = wParam.ToInt32();
+
+        // Avoid marshaling MSLLHOOKSTRUCT for moves and other high-frequency messages.
+        if (message is WmMouseWheel or WmMouseHWheel)
+        {
+            return HandleScrollMessage(code, wParam, lParam, message);
+        }
+
+        if (message is WmMButtonDown or WmMButtonUp or WmXButtonDown or WmXButtonUp)
         {
             var hookData = Marshal.PtrToStructure<MouseHookStruct>(lParam);
-            if (TryGetMouseButtonEvent(wParam.ToInt32(), hookData.MouseData, out var mouseButtonEvent)
+            if (TryGetMouseButtonEvent(message, hookData.MouseData, out var mouseButtonEvent)
                 && TryHandleMouseButtonEvent(mouseButtonEvent))
             {
                 return new IntPtr(1);
@@ -167,6 +286,39 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         }
 
         return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
+    }
+
+    private IntPtr HandleScrollMessage(int code, IntPtr wParam, IntPtr lParam, int message)
+    {
+        MouseScrollWatchSubscription[] subscriptions;
+        MouseScrollEventSnapshot snapshot;
+        lock (_gate)
+        {
+            if (_scrollSubscriptions.Count == 0)
+            {
+                return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
+            }
+
+            var hookData = Marshal.PtrToStructure<MouseHookStruct>(lParam);
+            if (!TryCreateScrollEvent(
+                    message,
+                    hookData.MouseData,
+                    hookData.Flags,
+                    hookData.Point.X,
+                    hookData.Point.Y,
+                    ReadPressedModifiers(),
+                    out snapshot))
+            {
+                return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
+            }
+
+            subscriptions = [.. _scrollSubscriptions];
+        }
+
+        var shouldSwallow = _scrollDispatcher.Dispatch(snapshot, subscriptions);
+        return shouldSwallow
+            ? new IntPtr(1)
+            : _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
     }
 
     private bool TryHandleMouseButtonEvent(MouseButtonEvent mouseButtonEvent)
@@ -258,6 +410,20 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
 
         if (!ready.Wait(HookInstallTimeout))
         {
+            // Best-effort: stop a late-finishing install thread so we do not leave an orphaned hook.
+            if (_hookThreadId != 0)
+            {
+                _ = _platform.PostThreadMessage(_hookThreadId, WmQuit, IntPtr.Zero, IntPtr.Zero);
+            }
+
+            if (_hookHandle != IntPtr.Zero)
+            {
+                _ = _platform.UnhookWindowsHookEx(_hookHandle);
+                _hookHandle = IntPtr.Zero;
+            }
+
+            _hookThreadId = 0;
+            _hookThread = null;
             var exception = new TimeoutException($"Timed out after {HookInstallTimeout.TotalMilliseconds:F0}ms while installing WH_MOUSE_LL hook.");
             _logger.Error("Low-level mouse hook installation timed out.", exception);
             throw exception;
@@ -311,11 +477,30 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
             }
 
             _logger.Info($"Mouse hotkey unregistered id={id}.");
-            if (_registrations.Count == 0)
+            MaybeUninstallHookUnlocked();
+        }
+    }
+
+    private void RemoveScrollSubscription(MouseScrollWatchSubscription subscription)
+    {
+        lock (_gate)
+        {
+            if (!_scrollSubscriptions.Remove(subscription))
             {
-                _activeRegistrations.Clear();
-                UninstallHook();
+                return;
             }
+
+            _logger.Info($"Mouse scroll watch disposed id={subscription.Id} count={_scrollSubscriptions.Count}.");
+            MaybeUninstallHookUnlocked();
+        }
+    }
+
+    private void MaybeUninstallHookUnlocked()
+    {
+        if (_registrations.Count == 0 && _scrollSubscriptions.Count == 0)
+        {
+            _activeRegistrations.Clear();
+            UninstallHook();
         }
     }
 
@@ -381,6 +566,17 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     private bool IsKeyPressed(int virtualKey)
     {
         return (_platform.GetAsyncKeyState(virtualKey) & KeyPressedMask) != 0;
+    }
+
+    private static string FormatAxes(MouseScrollAxis axes)
+    {
+        return axes switch
+        {
+            MouseScrollAxis.Vertical => "vertical",
+            MouseScrollAxis.Horizontal => "horizontal",
+            MouseScrollAxis.Both => "both",
+            _ => axes.ToString().ToLowerInvariant()
+        };
     }
 
     internal readonly record struct MouseButtonEvent(HotkeyMouseButton Button, bool IsDown);
