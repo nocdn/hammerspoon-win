@@ -689,12 +689,21 @@
         return host.Mouse.Repeat(button, options);
       },
 
+      stopRepeat() {
+        host.Mouse.StopRepeat();
+      },
+
       watchScroll(callback, options) {
         if (typeof callback !== "function") {
           throw new Error("Mouse scroll watch callback must be a function.");
         }
 
-        return host.Mouse.WatchScroll((eventJson) => callback(parseJson(eventJson)) === true, options);
+        // Callbacks always run off the low-level mouse hook. preventDefault swallows natively
+        // while the watcher is registered; the return value is not used for swallow decisions.
+        return host.Mouse.WatchScroll((eventJson) => {
+          callback(parseJson(eventJson));
+          return false;
+        }, options);
       }
     }),
 

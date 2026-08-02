@@ -25,6 +25,10 @@ public sealed class NullKeyboardInputService : IKeyboardInputService
         return new NullDisposable();
     }
 
+    public void StopActiveRepeat()
+    {
+    }
+
     private sealed class NullDisposable : IDisposable
     {
         public void Dispose()

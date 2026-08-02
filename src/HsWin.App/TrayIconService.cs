@@ -17,6 +17,7 @@ internal sealed class TrayIconService : IDisposable
     public TrayIconService(
         Action openConfig,
         Action reloadConfig,
+        Action emergencyStop,
         Func<bool> isStartAtLoginEnabled,
         Action<bool> setStartAtLoginEnabled,
         Func<bool> isCliInstalled,
@@ -31,6 +32,10 @@ internal sealed class TrayIconService : IDisposable
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add(new ToolStripMenuItem("Open Config", image: null, onClick: (_, _) => openConfig()));
         contextMenu.Items.Add(new ToolStripMenuItem("Reload Config", image: null, onClick: (_, _) => reloadConfig()));
+        contextMenu.Items.Add(new ToolStripMenuItem(
+            "Emergency Stop (Ctrl+Alt+Shift+Esc)",
+            image: null,
+            onClick: (_, _) => emergencyStop()));
 
         _startAtLoginItem = new ToolStripMenuItem("Start at Login")
         {

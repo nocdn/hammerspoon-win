@@ -108,6 +108,24 @@ internal sealed partial class KeyboardInputService : IKeyboardInputService
         }
     }
 
+    public void StopActiveRepeat()
+    {
+        KeyboardRepeatHandle? active;
+        lock (_repeatGate)
+        {
+            active = _activeRepeat;
+            _activeRepeat = null;
+        }
+
+        if (active is null)
+        {
+            return;
+        }
+
+        _logger.Info("Stopping active keyboard repeat via StopActiveRepeat().");
+        active.Dispose();
+    }
+
     private void ClearActiveRepeat(KeyboardRepeatHandle repeat)
     {
         lock (_repeatGate)

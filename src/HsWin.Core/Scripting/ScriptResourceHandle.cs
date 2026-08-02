@@ -1,6 +1,6 @@
 namespace HsWin.Core.Scripting;
 
-public sealed class ScriptResourceHandle : IDisposable
+public class ScriptResourceHandle : IDisposable
 {
     private readonly IDisposable _inner;
     private bool _disposed;

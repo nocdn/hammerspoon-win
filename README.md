@@ -12,10 +12,22 @@ Right-click the notification area icon:
 
 - **Open Config** — opens `%APPDATA%\HsWin\config.js` in your default editor (creates the default file first if missing).
 - **Reload Config** — reloads `config.js` on a background thread (shows reload toasts; same engine reset as startup reload).
+- **Emergency Stop (Ctrl+Alt+Shift+Esc)** — host safety valve: immediately stops mouse/keyboard auto-repeat, interrupts the JavaScript engine, and disposes all config hotkeys, watches, and timers. Automation stays off until you **Reload Config**. This hotkey is registered by the host itself (not `config.js`), so a buggy config cannot remove it.
 - **Start at Login** — toggles whether HsWin starts when you sign in to Windows.
 - **Install hspn CLI** — adds the installed app directory to your user `PATH` so new terminals can run `hspn` (shows installing and success/error toasts).
 - **Version** — shows the version of the currently running HsWin process.
 - **Quit** — exits the app.
+
+### Emergency stop
+
+If automation runs away (for example a stuck mouse-repeat), press **Ctrl+Alt+Shift+Esc** or choose **Emergency Stop** from the tray menu. That:
+
+1. Stops any active `hs.mouse.repeat` / `hs.keyboard.repeat` at the host layer
+2. Interrupts the V8 engine if a script callback is mid-execution
+3. Disposes every script-owned resource (hotkeys, scroll watches, timers, etc.)
+4. Shows an error toast: automation is halted until you reload config
+
+`Ctrl+Alt+Shift+Esc` is reserved for this host feature; avoid binding the same combo in `config.js`.
 
 ## Command line
 
@@ -482,27 +494,32 @@ const meter = hs.audio.levels({ intervalMs: 100 }, event => {
 hs.timer.doAfter(3000, () => meter.stop());
 ```
 
-### `hs.mouse.click(button)`, `hs.mouse.repeat(button, options?)`
+### `hs.mouse.click(button)`, `hs.mouse.repeat(button, options?)`, `hs.mouse.stopRepeat()`
 
-Sends a native mouse click at the current cursor position, or starts a native repeat loop. Supported buttons are `left`, `right`, `middle`, `back`/`xbutton1`, and `forward`/`xbutton2`, with `button1` through `button5` and `mouse.*` aliases. `repeat` starts with one immediate click and accepts `intervalMs`/`interval` from `1` to `1000` milliseconds. The optional `inputMethod` is `sendInput` (the default global Windows input path) or `windowMessage` (posts button messages to the focused window). The repeat handle supports `stop()`, `dispose()`, and `delete()`; config reload and the matching held-button release stop it automatically.
+Sends a native mouse click at the current cursor position, or starts a native repeat loop. Supported buttons are `left`, `right`, `middle`, `back`/`xbutton1`, and `forward`/`xbutton2`, with `button1` through `button5` and `mouse.*` aliases. `repeat` starts with one immediate click and accepts `intervalMs`/`interval` from `1` to `1000` milliseconds. The optional `inputMethod` is `sendInput` (the default global Windows input path) or `windowMessage` (posts button messages to the focused window).
+
+The repeat handle supports `stop()` / `dispose()` / `delete()`, plus `setIntervalMs(ms)` / `intervalMs` to change rate **without** tearing down the session (preferred when adjusting rate from scroll). Only one mouse-repeat session is active at a time; starting a new one replaces the previous. `hs.mouse.stopRepeat()` force-stops the active session even if a script lost its handle. Config reload stops active repeats automatically.
 
 ```js
 hs.mouse.click("right");
 
 const repeat = hs.mouse.repeat("right", { intervalMs: 20, inputMethod: "windowMessage" });
-hs.timer.doAfter(1000, () => repeat.stop());
+repeat.setIntervalMs(10);
+hs.timer.doAfter(1000, () => {
+  repeat.stop();
+  // or: hs.mouse.stopRepeat();
+});
 ```
 
 ### `hs.mouse.watchScroll(callback, options?)`
 
-Subscribes to global mouse wheel events (vertical wheel and horizontal tilt wheel). Watchers are non-blocking by default: callbacks run off the Windows low-level mouse hook path, so they can observe scrolling without delaying it. Non-blocking callbacks cannot swallow input; returning `true` is ignored and logged as a warning.
+Subscribes to global mouse wheel events (vertical wheel and horizontal tilt wheel). **Callbacks always run off the Windows low-level mouse hook path**, so they never delay physical mouse input or hold the script lock on the hook thread.
 
-To **prevent the focused app from seeing the scroll** (for example so Minecraft does not change inventory slots while an auto-clicker owns the wheel), enable swallow mode and `return true` from the callback:
+To **prevent the focused app from seeing the scroll** while a feature is active (for example so Minecraft does not change inventory slots), register the watcher with preventDefault **only for the duration of that feature**, then `stop()` it when done:
 
-- Options: `{ blocking: true }`, or the aliases `{ swallow: true }`, `{ preventDefault: true }`, `{ prevent: true }`, `{ capture: true }`
-- Callback: `return true` swallows that event; `return false` (or nothing useful) lets it pass through to the app
-
-Swallow mode runs on the mouse hook path, so keep heavy work in `hs.timer.doAfter`, `hs.task.run`, or a hotkey callback. Prefer conditional swallow: only return `true` while your feature is active, so normal scrolling still works the rest of the time.
+- Options: `{ preventDefault: true }` (aliases: `blocking`, `swallow`, `prevent`, `capture`)
+- While registered with preventDefault, matching scroll events are swallowed **natively on the hook path** (no JavaScript on the hook)
+- The callback still receives the event asynchronously for rate changes / toasts / logging
 
 ```js
 // Observe all scroll events without affecting apps.
@@ -510,24 +527,38 @@ hs.mouse.watchScroll(event => {
   console.log(event.direction, event.delta, event.axis, event.x, event.y);
 });
 
-// Only vertical wheel; swallow while a custom mode is active.
-let turboClickActive = false;
+// Swallow vertical scroll only while auto-click is held.
+let scrollWatch = null;
 let clickIntervalMs = 20;
+let repeat = null;
 
-hs.mouse.watchScroll(event => {
-  if (!turboClickActive || event.axis !== "vertical") {
-    return false; // pass scroll through to the game/app
+function startAutoClick() {
+  repeat = hs.mouse.repeat("right", { intervalMs: clickIntervalMs, inputMethod: "windowMessage" });
+  scrollWatch = hs.mouse.watchScroll(event => {
+    if (event.axis !== "vertical" || !repeat) {
+      return;
+    }
+
+    const stepMs = event.direction === "up" ? -5 : 5;
+    clickIntervalMs = Math.min(1000, Math.max(1, clickIntervalMs + stepMs));
+    repeat.setIntervalMs(clickIntervalMs);
+    hs.alert.show(`Click every ${clickIntervalMs}ms`, { type: "normal", durationMs: 600 });
+  }, { preventDefault: true, axes: "vertical" });
+}
+
+function stopAutoClick() {
+  if (scrollWatch) {
+    scrollWatch.stop();
+    scrollWatch = null;
   }
 
-  // Scroll up => faster clicks (lower interval), scroll down => slower.
-  const stepMs = event.direction === "up" ? -5 : 5;
-  clickIntervalMs = Math.min(1000, Math.max(1, clickIntervalMs + stepMs));
-  // Keep blocking callbacks tiny — schedule UI off the hook path.
-  hs.timer.doAfter(1, () => {
-    hs.alert.show(`Click every ${clickIntervalMs}ms`, { type: "normal", durationMs: 600 });
-  });
-  return true; // swallow: app never receives this wheel tick
-}, { preventDefault: true, axes: "vertical" });
+  if (repeat) {
+    repeat.stop();
+    repeat = null;
+  }
+
+  hs.mouse.stopRepeat(); // belt-and-suspenders if a race lost the handle
+}
 ```
 
 Each event has:
@@ -544,13 +575,13 @@ Each event has:
 Options:
 
 - `includeInjected` (default `false`) — also receive synthetic/injected wheel events
-- `blocking` / `swallow` / `preventDefault` / `prevent` / `capture` (default `false`) — run on the hook path and honor `return true` to swallow so the active app does not receive the scroll
+- `preventDefault` / `blocking` / `swallow` / `prevent` / `capture` (default `false`) — while this watcher is registered, matching scroll events are swallowed natively so the active app does not receive them; callbacks still run off-hook
 - `axes` / `axis` — `"vertical"`, `"horizontal"`, `"both"` (default), or an array such as `["vertical"]` (aliases include `v`/`y`/`wheel` and `h`/`x`/`tilt`)
 - `prepend` / `priority` / `first` (default `false`) — register this watcher ahead of existing ones
 
 Returned handles support `stop()`, `dispose()`, and `delete()`; config reload disposes them automatically. The low-level mouse hook is shared with mouse-button hotkeys and is installed only while at least one mouse hotkey or scroll watcher is registered.
 
-**Watcher order:** callbacks run in registration order. The first blocking watcher that returns `true` swallows the event and later watchers are skipped. Non-blocking watchers registered *before* that blocker still get scheduled. Use `{ prepend: true }` to insert a watcher at the front of the list.
+**Safety:** never put heavy work in a way that assumes the mouse hook waits for JavaScript. With this API, preventDefault swallow is host-side and callbacks are always asynchronous.
 
 ### `hs.mouse.getCurrentScreen()`, `hs.mouse.isOnPrimaryScreen()`
 

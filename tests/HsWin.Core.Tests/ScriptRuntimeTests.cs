@@ -1162,6 +1162,8 @@ public sealed class ScriptRuntimeTests
         runtime.Reload("""
             hs.mouse.click("right");
             const repeat = hs.mouse.repeat("right", { intervalMs: 20 });
+            repeat.setIntervalMs(15);
+            hs.mouse.stopRepeat();
             repeat.stop();
             """);
 
@@ -1169,6 +1171,8 @@ public sealed class ScriptRuntimeTests
         var repeatRegistration = Assert.Single(mouseInput.Repeats);
         Assert.Equal(MouseButton.Right, repeatRegistration.Button);
         Assert.Equal(20, repeatRegistration.Options.IntervalMs);
+        Assert.Equal(15, repeatRegistration.Registration.IntervalMs);
+        Assert.Equal(1, mouseInput.StopActiveRepeatCallCount);
         Assert.True(repeatRegistration.Registration.IsDisposed);
     }
 
@@ -1186,15 +1190,15 @@ public sealed class ScriptRuntimeTests
         runtime.Reload("""
             hs.mouse.watchScroll(event => {
               hs.alert.show(`${event.type}:${event.axis}:${event.direction}:${event.delta}`, "normal", 1);
-              return event.direction === "up";
-            }, { blocking: true, axes: "vertical" });
+            }, { preventDefault: true, axes: "vertical" });
             """);
 
         var watch = Assert.Single(mouseEvents.Watches);
         Assert.True(watch.Options.Blocking);
         Assert.Equal(MouseScrollAxis.Vertical, watch.Options.Axes);
 
-        var swallow = watch.Callback(new MouseScrollEventSnapshot(
+        // Callback return is unused for swallow; host swallows while preventDefault watcher is registered.
+        _ = watch.Callback(new MouseScrollEventSnapshot(
             MouseScrollEventSnapshot.ScrollType,
             MouseScrollEventSnapshot.VerticalAxis,
             MouseScrollEventSnapshot.DirectionUp,
@@ -1208,7 +1212,6 @@ public sealed class ScriptRuntimeTests
             X: 10,
             Y: 20));
 
-        Assert.True(swallow);
         var request = Assert.Single(presenter.Requests);
         Assert.Equal("scroll:vertical:up:120", request.Text);
     }
@@ -1227,6 +1230,37 @@ public sealed class ScriptRuntimeTests
         runtime.Reload("""console.log("new");""");
 
         Assert.True(watch.IsDisposed);
+    }
+
+    [Fact]
+    public void EmergencyStopDisposesResourcesAndClearsEngine()
+    {
+        var hotkeys = new CapturingHotkeyRegistrar();
+        var timers = new CapturingScriptTimerService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Hotkeys = hotkeys,
+            Timers = timers
+        });
+
+        runtime.Reload("""
+            hs.hotkey.bind(["ctrl"], "F24", () => {});
+            hs.timer.doEvery(1000, () => {});
+            """);
+
+        Assert.True(runtime.HasActiveEngine);
+        Assert.NotEmpty(hotkeys.Registrations);
+        Assert.NotEmpty(timers.Timers);
+
+        runtime.EmergencyStop();
+
+        Assert.False(runtime.HasActiveEngine);
+        Assert.All(hotkeys.Registrations, registration => Assert.True(registration.IsDisposed));
+        Assert.All(timers.Timers, timer => Assert.True(timer.IsDisposed));
+
+        // Runtime remains reloadable after emergency stop.
+        runtime.Reload("""hs.hotkey.bind(["ctrl"], "F23", () => {});""");
+        Assert.True(runtime.HasActiveEngine);
     }
 
     [Fact]
@@ -2332,16 +2366,47 @@ public sealed class ScriptRuntimeTests
 
         public List<CapturingMouseRepeat> Repeats { get; } = [];
 
+        public int StopActiveRepeatCallCount { get; private set; }
+
         public void Click(MouseButton button)
         {
             Clicks.Add(button);
         }
 
-        public IDisposable Repeat(MouseButton button, MouseRepeatOptions options)
+        public IMouseRepeatSession Repeat(MouseButton button, MouseRepeatOptions options)
         {
-            var registration = new CapturingDisposable();
+            var registration = new CapturingMouseRepeatSession(options.IntervalMs);
             Repeats.Add(new CapturingMouseRepeat(button, options, registration));
             return registration;
+        }
+
+        public void StopActiveRepeat()
+        {
+            StopActiveRepeatCallCount++;
+        }
+    }
+
+    private sealed class CapturingMouseRepeatSession : IMouseRepeatSession
+    {
+        private readonly CapturingDisposable _disposable = new();
+
+        public CapturingMouseRepeatSession(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
+        public int IntervalMs { get; private set; }
+
+        public bool IsDisposed => _disposable.IsDisposed;
+
+        public void SetIntervalMs(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
+        public void Dispose()
+        {
+            _disposable.Dispose();
         }
     }
 
@@ -2365,7 +2430,7 @@ public sealed class ScriptRuntimeTests
     private sealed record CapturingMouseRepeat(
         MouseButton Button,
         MouseRepeatOptions Options,
-        CapturingDisposable Registration);
+        CapturingMouseRepeatSession Registration);
 
     private sealed class CapturingWindowService : IWindowService
     {
@@ -2476,6 +2541,10 @@ public sealed class ScriptRuntimeTests
             var registration = new CapturingDisposable();
             Repeats.Add(new CapturingRepeat(virtualKey, options, registration));
             return registration;
+        }
+
+        public void StopActiveRepeat()
+        {
         }
     }
 

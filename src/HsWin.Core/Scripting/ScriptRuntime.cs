@@ -159,6 +159,38 @@ public sealed class ScriptRuntime : IDisposable
         }
     }
 
+    /// <summary>
+    /// Immediately stops script automation: interrupts the V8 engine if possible, disposes all
+    /// tracked resources (hotkeys, watches, timers, repeats, etc.), and tears down the engine.
+    /// The runtime stays usable so a later <see cref="Reload"/> can restore config.
+    /// </summary>
+    public void EmergencyStop()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        _services.Logger.Warning("ScriptRuntime emergency stop: interrupting engine and disposing all script resources.");
+
+        var engine = _engine;
+        if (engine is not null)
+        {
+            try
+            {
+                // Abort a runaway script callback if one is currently executing.
+                engine.Interrupt();
+            }
+            catch (Exception exception)
+            {
+                _services.Logger.Warning($"ScriptRuntime emergency stop: engine interrupt failed. {exception.Message}");
+            }
+        }
+
+        DisposeRuntimeResources();
+        DisposeEngine();
+        _services.Logger.Warning("ScriptRuntime emergency stop completed. Reload config to resume automation.");
+    }
+
+    public bool HasActiveEngine => _engine is not null;
+
     public void Dispose()
     {
         if (_disposed)

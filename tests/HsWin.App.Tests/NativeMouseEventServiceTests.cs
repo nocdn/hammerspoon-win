@@ -104,14 +104,17 @@ public sealed class NativeMouseEventServiceTests
         Assert.Equal(1, platform.SetHookExCount);
 
         Assert.Equal(new IntPtr(1), platform.InvokeWheel(0x020A, delta: 120));
+        Assert.Equal(0, seen);
+        var scheduled = Assert.Single(scheduler.Callbacks);
+        scheduled();
         Assert.Equal(1, seen);
     }
 
     [Fact]
-    public void BlockingWatcherCanSwallowWheelEvent()
+    public void PreventDefaultSwallowsWithoutInvokingCallbackOnHookThread()
     {
         var platform = new FakeMouseHookPlatform();
-        var scheduler = new ImmediateScheduler();
+        var scheduler = new CapturingScheduler();
         var dispatcher = new MouseScrollWatchDispatcher(NullRuntimeLogger.Instance, scheduler);
         using var hook = new NativeMouseHotkeyHook(NullRuntimeLogger.Instance, platform, callbackContext: null, dispatcher);
         var service = new NativeMouseEventService(hook);
@@ -122,13 +125,16 @@ public sealed class NativeMouseEventServiceTests
             _ =>
             {
                 seen++;
-                return true;
+                return false;
             });
 
         Assert.True(platform.InstallCompleted.Wait(TimeSpan.FromSeconds(5)));
         var result = platform.InvokeWheel(0x020A, delta: 120);
 
         Assert.Equal(new IntPtr(1), result);
+        Assert.Equal(0, seen);
+        var scheduled = Assert.Single(scheduler.Callbacks);
+        scheduled();
         Assert.Equal(1, seen);
     }
 
@@ -176,11 +182,6 @@ public sealed class NativeMouseEventServiceTests
 
         Assert.Equal(1, platform.UnhookCount);
         Assert.Equal(1, platform.QuitPostedCount);
-    }
-
-    private sealed class ImmediateScheduler : IMouseScrollWatchCallbackScheduler
-    {
-        public void Schedule(Action callback) => callback();
     }
 
     private sealed class CapturingScheduler : IMouseScrollWatchCallbackScheduler

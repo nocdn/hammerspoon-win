@@ -7,7 +7,7 @@ namespace HsWin.App.Tests;
 public sealed class MouseScrollWatchDispatcherTests
 {
     [Fact]
-    public void NonBlockingWatcherSchedulesCallbackAndDoesNotSwallowImmediately()
+    public void NonBlockingWatcherSchedulesCallbackAndDoesNotSwallow()
     {
         var scheduler = new CapturingScheduler();
         var logger = new CapturingRuntimeLogger();
@@ -32,7 +32,7 @@ public sealed class MouseScrollWatchDispatcherTests
     }
 
     [Fact]
-    public void BlockingWatcherRunsInlineAndCanSwallow()
+    public void PreventDefaultSwallowsNativelyWithoutRunningCallbackOnHookPath()
     {
         var scheduler = new CapturingScheduler();
         var dispatcher = new MouseScrollWatchDispatcher(new CapturingRuntimeLogger(), scheduler);
@@ -40,14 +40,18 @@ public sealed class MouseScrollWatchDispatcherTests
         var subscription = CreateSubscription(blocking: true, _ =>
         {
             called = true;
-            return true;
+            return false;
         });
 
         var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [subscription]);
 
         Assert.True(shouldSwallow);
+        Assert.False(called);
+        var scheduled = Assert.Single(scheduler.Callbacks);
+
+        scheduled();
+
         Assert.True(called);
-        Assert.Empty(scheduler.Callbacks);
     }
 
     [Fact]
@@ -79,36 +83,31 @@ public sealed class MouseScrollWatchDispatcherTests
     }
 
     [Fact]
-    public void BlockingSwallowStopsLaterWatchers()
+    public void MultiplePreventDefaultWatchersAllScheduleAndStillSwallowOnce()
     {
         var scheduler = new CapturingScheduler();
         var dispatcher = new MouseScrollWatchDispatcher(new CapturingRuntimeLogger(), scheduler);
-        var secondCalled = false;
-        var first = CreateSubscription(blocking: true, _ => true, id: 1);
-        var second = CreateSubscription(blocking: true, _ =>
-        {
-            secondCalled = true;
-            return false;
-        }, id: 2);
+        var first = CreateSubscription(blocking: true, _ => false, id: 1);
+        var second = CreateSubscription(blocking: true, _ => false, id: 2);
 
         var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [first, second]);
 
         Assert.True(shouldSwallow);
-        Assert.False(secondCalled);
+        Assert.Equal(2, scheduler.Callbacks.Count);
     }
 
     [Fact]
-    public void NonBlockingBeforeBlockerStillSchedules()
+    public void NonBlockingAndPreventDefaultTogetherStillSwallowAndScheduleBoth()
     {
         var scheduler = new CapturingScheduler();
         var dispatcher = new MouseScrollWatchDispatcher(new CapturingRuntimeLogger(), scheduler);
         var nonBlocking = CreateSubscription(blocking: false, _ => false, id: 1);
-        var blocking = CreateSubscription(blocking: true, _ => true, id: 2);
+        var blocking = CreateSubscription(blocking: true, _ => false, id: 2);
 
         var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [nonBlocking, blocking]);
 
         Assert.True(shouldSwallow);
-        Assert.Single(scheduler.Callbacks);
+        Assert.Equal(2, scheduler.Callbacks.Count);
     }
 
     [Fact]
@@ -125,7 +124,10 @@ public sealed class MouseScrollWatchDispatcherTests
 
         var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(isInjected: true), [subscription]);
 
-        Assert.False(shouldSwallow);
+        Assert.True(shouldSwallow);
+        Assert.False(called);
+        var scheduled = Assert.Single(scheduler.Callbacks);
+        scheduled();
         Assert.True(called);
     }
 

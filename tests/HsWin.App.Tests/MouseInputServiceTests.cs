@@ -50,6 +50,37 @@ public sealed class MouseInputServiceTests
         Assert.All(sender.InputMethods, method => Assert.Equal(MouseInputMethod.WindowMessage, method));
     }
 
+    [Fact]
+    public void SetIntervalMsChangesRateWithoutReplacingTheSession()
+    {
+        var sender = new CapturingMouseInputSender();
+        var service = new MouseInputService(NullRuntimeLogger.Instance, sender);
+
+        using var repeat = service.Repeat(MouseButton.Right, new MouseRepeatOptions(20));
+        Assert.Equal(20, repeat.IntervalMs);
+
+        repeat.SetIntervalMs(5);
+        Assert.Equal(5, repeat.IntervalMs);
+        Assert.True(sender.WaitForClickCount(3, TimeSpan.FromSeconds(2)));
+    }
+
+    [Fact]
+    public void StopActiveRepeatStopsOrphanedSessions()
+    {
+        var sender = new CapturingMouseInputSender();
+        var service = new MouseInputService(NullRuntimeLogger.Instance, sender);
+
+        var orphan = service.Repeat(MouseButton.Right, new MouseRepeatOptions(10));
+        Assert.True(sender.WaitForClickCount(2, TimeSpan.FromSeconds(2)));
+
+        service.StopActiveRepeat();
+        var countAfterStop = sender.Clicks.Count;
+        Thread.Sleep(50);
+
+        Assert.Equal(countAfterStop, sender.Clicks.Count);
+        orphan.Dispose();
+    }
+
     private sealed class CapturingMouseInputSender : IMouseInputSender
     {
         private readonly object _gate = new();

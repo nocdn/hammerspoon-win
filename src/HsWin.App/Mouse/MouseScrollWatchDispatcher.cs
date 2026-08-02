@@ -3,6 +3,15 @@ using HsWin.Core.Mouse;
 
 namespace HsWin.App.Mouse;
 
+/// <summary>
+/// Dispatches mouse-scroll watch subscriptions.
+/// <para>
+/// Critical safety rule: script callbacks never run on the low-level mouse hook thread.
+/// When <see cref="MouseScrollWatchOptions.Blocking"/> / preventDefault is enabled, matching
+/// events are swallowed natively on the hook path and the script callback is scheduled off-hook.
+/// That keeps physical input responsive and prevents global script-lock deadlocks with hotkey release.
+/// </para>
+/// </summary>
 internal sealed class MouseScrollWatchDispatcher
 {
     private readonly IRuntimeLogger _logger;
@@ -20,6 +29,8 @@ internal sealed class MouseScrollWatchDispatcher
         MouseScrollEventSnapshot snapshot,
         IReadOnlyList<MouseScrollWatchSubscription> subscriptions)
     {
+        var shouldSwallow = false;
+
         foreach (var subscription in subscriptions)
         {
             if (ShouldSkip(subscription, snapshot))
@@ -29,18 +40,17 @@ internal sealed class MouseScrollWatchDispatcher
 
             if (subscription.Options.Blocking)
             {
-                if (InvokeBlocking(subscription, snapshot))
-                {
-                    return true;
-                }
-
-                continue;
+                // Native swallow only — never invoke JavaScript on the hook thread.
+                shouldSwallow = true;
+                _logger.Info(
+                    $"Mouse scroll watch will swallow id={subscription.Id} axis='{snapshot.Axis}' " +
+                    $"direction='{snapshot.Direction}' delta={snapshot.Delta} (callback scheduled off-hook).");
             }
 
-            ScheduleNonBlocking(subscription, snapshot);
+            ScheduleCallback(subscription, snapshot);
         }
 
-        return false;
+        return shouldSwallow;
     }
 
     private static bool ShouldSkip(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
@@ -59,32 +69,11 @@ internal sealed class MouseScrollWatchDispatcher
         return !subscription.Options.IncludesAxis(axis);
     }
 
-    private bool InvokeBlocking(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
+    private void ScheduleCallback(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
     {
         try
         {
-            var shouldSwallow = subscription.Callback(snapshot);
-            if (shouldSwallow)
-            {
-                _logger.Info(
-                    $"Mouse scroll watch requested swallow id={subscription.Id} axis='{snapshot.Axis}' " +
-                    $"direction='{snapshot.Direction}' delta={snapshot.Delta}.");
-            }
-
-            return shouldSwallow;
-        }
-        catch (Exception exception)
-        {
-            _logger.Error($"Mouse scroll watch callback failed id={subscription.Id}.", exception);
-            return false;
-        }
-    }
-
-    private void ScheduleNonBlocking(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
-    {
-        try
-        {
-            _scheduler.Schedule(() => InvokeNonBlocking(subscription, snapshot));
+            _scheduler.Schedule(() => InvokeCallback(subscription, snapshot));
         }
         catch (Exception exception)
         {
@@ -92,7 +81,7 @@ internal sealed class MouseScrollWatchDispatcher
         }
     }
 
-    private void InvokeNonBlocking(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
+    private void InvokeCallback(MouseScrollWatchSubscription subscription, MouseScrollEventSnapshot snapshot)
     {
         if (subscription.IsDisposed)
         {
@@ -101,10 +90,14 @@ internal sealed class MouseScrollWatchDispatcher
 
         try
         {
-            if (subscription.Callback(snapshot))
+            // Return value is ignored for preventDefault watchers (host already swallowed natively).
+            // For non-blocking watchers, true is only a usage warning.
+            var requestedSwallow = subscription.Callback(snapshot);
+            if (requestedSwallow && !subscription.Options.Blocking)
             {
                 _logger.Warning(
-                    $"Mouse scroll watch callback returned true for non-blocking watcher id={subscription.Id}; use blocking=true to swallow input.");
+                    $"Mouse scroll watch callback returned true for non-blocking watcher id={subscription.Id}; " +
+                    "use {{ preventDefault: true }} so matching scroll events are swallowed while the watcher is registered.");
             }
         }
         catch (Exception exception)

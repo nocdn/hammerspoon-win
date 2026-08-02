@@ -4,5 +4,11 @@ public interface IMouseInputService
 {
     void Click(MouseButton button);
 
-    IDisposable Repeat(MouseButton button, MouseRepeatOptions options);
+    IMouseRepeatSession Repeat(MouseButton button, MouseRepeatOptions options);
+
+    /// <summary>
+    /// Stops the active global mouse-repeat session, if any. Safe to call when idle.
+    /// Use this as a belt-and-suspenders release path so a raced handle cannot keep clicking.
+    /// </summary>
+    void StopActiveRepeat();
 }

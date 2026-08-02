@@ -12,13 +12,23 @@ public sealed class NullMouseInputService : IMouseInputService
     {
     }
 
-    public IDisposable Repeat(MouseButton button, MouseRepeatOptions options)
+    public IMouseRepeatSession Repeat(MouseButton button, MouseRepeatOptions options)
     {
-        return new NullDisposable();
+        return new NullRepeatSession();
     }
 
-    private sealed class NullDisposable : IDisposable
+    public void StopActiveRepeat()
     {
+    }
+
+    private sealed class NullRepeatSession : IMouseRepeatSession
+    {
+        public int IntervalMs => MouseRepeatOptions.DefaultIntervalMs;
+
+        public void SetIntervalMs(int intervalMs)
+        {
+        }
+
         public void Dispose()
         {
         }

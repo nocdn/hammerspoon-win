@@ -11,6 +11,7 @@ public sealed class TrayIconServiceTests
         using var service = new TrayIconService(
             openConfig: () => { },
             reloadConfig: () => { },
+            emergencyStop: () => { },
             isStartAtLoginEnabled: () => false,
             setStartAtLoginEnabled: _ => { },
             isCliInstalled: () => true,
@@ -30,5 +31,9 @@ public sealed class TrayIconServiceTests
 
         Assert.Equal($"Version {AppBranding.Version}", versionItem.Text);
         Assert.False(versionItem.Enabled);
+
+        Assert.Contains(
+            contextMenu.Items.OfType<ToolStripMenuItem>(),
+            item => item.Text?.Contains("Emergency Stop", StringComparison.Ordinal) == true);
     }
 }

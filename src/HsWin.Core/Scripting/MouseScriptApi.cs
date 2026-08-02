@@ -57,15 +57,21 @@ public sealed class MouseScriptApi
         _logger.Info($"Script hs.mouse.click('{MouseButtonParser.GetDisplayName(parsedButton)}') requested.");
     }
 
-    public ScriptResourceHandle Repeat(object? button, object? options = null)
+    public MouseRepeatScriptHandle Repeat(object? button, object? options = null)
     {
         var parsedButton = MouseButtonParser.Parse(button);
         var parsedOptions = MouseScriptOptionsParser.ParseRepeatOptions(options);
-        var handle = new ScriptResourceHandle(_mouseInput.Repeat(parsedButton, parsedOptions));
+        var handle = new MouseRepeatScriptHandle(_mouseInput.Repeat(parsedButton, parsedOptions));
         _trackResource(handle);
         _logger.Info(
             $"Script hs.mouse.repeat('{MouseButtonParser.GetDisplayName(parsedButton)}') intervalMs={parsedOptions.IntervalMs}.");
         return handle;
+    }
+
+    public void StopRepeat()
+    {
+        _mouseInput.StopActiveRepeat();
+        _logger.Info("Script hs.mouse.stopRepeat() requested.");
     }
 
     public ScriptResourceHandle WatchScroll(object? callback, object? options = null)
@@ -82,19 +88,9 @@ public sealed class MouseScriptApi
             {
                 var eventJson = ScriptJson.Serialize(scrollEvent);
                 var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
-                var requestedSwallow = Convert.ToBoolean(result, CultureInfo.InvariantCulture);
-                if (parsedOptions.Blocking)
-                {
-                    return requestedSwallow;
-                }
-
-                if (requestedSwallow)
-                {
-                    _logger.Warning(
-                        "Non-blocking hs.mouse.watchScroll() callback returned true; use { blocking: true } when a watcher must swallow scroll input.");
-                }
-
-                return false;
+                // Return value is only meaningful for usage warnings on non-preventDefault watchers.
+                // preventDefault swallow is decided natively on the hook path without JS.
+                return Convert.ToBoolean(result, CultureInfo.InvariantCulture);
             });
 
         var handle = new ScriptResourceHandle(registration);

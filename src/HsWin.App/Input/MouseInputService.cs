@@ -28,7 +28,7 @@ internal sealed class MouseInputService : IMouseInputService
         _inputSender.SendClick(button, MouseInputMethod.SendInput, _logger);
     }
 
-    public IDisposable Repeat(MouseButton button, MouseRepeatOptions options)
+    public IMouseRepeatSession Repeat(MouseButton button, MouseRepeatOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -67,6 +67,24 @@ internal sealed class MouseInputService : IMouseInputService
         }
     }
 
+    public void StopActiveRepeat()
+    {
+        MouseRepeatHandle? active;
+        lock (_repeatGate)
+        {
+            active = _activeRepeat;
+            _activeRepeat = null;
+        }
+
+        if (active is null)
+        {
+            return;
+        }
+
+        _logger.Info("Stopping active mouse repeat via StopActiveRepeat().");
+        active.Dispose();
+    }
+
     private void ClearActiveRepeat(MouseRepeatHandle repeat)
     {
         lock (_repeatGate)
@@ -78,10 +96,9 @@ internal sealed class MouseInputService : IMouseInputService
         }
     }
 
-    private sealed class MouseRepeatHandle : IDisposable
+    private sealed class MouseRepeatHandle : IMouseRepeatSession
     {
         private readonly MouseButton _button;
-        private readonly MouseRepeatOptions _options;
         private readonly IRuntimeLogger _logger;
         private readonly IMouseInputSender _inputSender;
         private readonly Action<MouseRepeatHandle> _clearActiveRepeat;
@@ -89,6 +106,8 @@ internal sealed class MouseInputService : IMouseInputService
         private readonly Stopwatch _stopwatch = new();
         private readonly System.Threading.Timer _timer;
 
+        private MouseInputMethod _inputMethod;
+        private int _intervalMs;
         private bool _disposed;
         private long _clickCount;
         private long _lastLoggedClickCount;
@@ -101,22 +120,70 @@ internal sealed class MouseInputService : IMouseInputService
             Action<MouseRepeatHandle> clearActiveRepeat)
         {
             _button = button;
-            _options = options;
+            _intervalMs = options.IntervalMs;
+            _inputMethod = options.InputMethod;
             _logger = logger;
             _inputSender = inputSender;
             _clearActiveRepeat = clearActiveRepeat;
             _timer = new System.Threading.Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
         }
 
+        public int IntervalMs
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _intervalMs;
+                }
+            }
+        }
+
         public void Start()
         {
+            int intervalMs;
+            MouseInputMethod inputMethod;
+            lock (_gate)
+            {
+                intervalMs = _intervalMs;
+                inputMethod = _inputMethod;
+            }
+
             _stopwatch.Start();
             _logger.Info(
                 $"Mouse repeat started button={MouseButtonParser.GetDisplayName(_button)} " +
-                $"intervalMs={_options.IntervalMs} inputMethod={MouseInputMethodParser.GetDisplayName(_options.InputMethod)}.");
-            _inputSender.SendClick(_button, _options.InputMethod, _logger);
+                $"intervalMs={intervalMs} inputMethod={MouseInputMethodParser.GetDisplayName(inputMethod)}.");
+            _inputSender.SendClick(_button, inputMethod, _logger);
             _clickCount++;
-            _timer.Change(_options.IntervalMs, _options.IntervalMs);
+            _timer.Change(intervalMs, intervalMs);
+        }
+
+        public void SetIntervalMs(int intervalMs)
+        {
+            if (intervalMs is < MouseRepeatOptions.MinimumIntervalMs or > MouseRepeatOptions.MaximumIntervalMs)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(intervalMs),
+                    $"Mouse repeat interval must be between {MouseRepeatOptions.MinimumIntervalMs} and {MouseRepeatOptions.MaximumIntervalMs} milliseconds.");
+            }
+
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (_intervalMs == intervalMs)
+                {
+                    return;
+                }
+
+                _intervalMs = intervalMs;
+                _timer.Change(intervalMs, intervalMs);
+                _logger.Info(
+                    $"Mouse repeat interval changed button={MouseButtonParser.GetDisplayName(_button)} intervalMs={intervalMs}.");
+            }
         }
 
         public void Dispose()
@@ -139,6 +206,7 @@ internal sealed class MouseInputService : IMouseInputService
 
         private void Tick()
         {
+            MouseInputMethod inputMethod;
             lock (_gate)
             {
                 if (_disposed)
@@ -146,19 +214,29 @@ internal sealed class MouseInputService : IMouseInputService
                     return;
                 }
 
-                try
+                inputMethod = _inputMethod;
+            }
+
+            try
+            {
+                _inputSender.SendClick(_button, inputMethod, _logger);
+                lock (_gate)
                 {
-                    _inputSender.SendClick(_button, _options.InputMethod, _logger);
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
                     _clickCount++;
                     LogProgressIfNeeded();
                 }
-                catch (Exception exception)
-                {
-                    _logger.Error(
-                        $"Mouse repeat tick failed button={MouseButtonParser.GetDisplayName(_button)} click={_clickCount}.",
-                        exception);
-                    Dispose();
-                }
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(
+                    $"Mouse repeat tick failed button={MouseButtonParser.GetDisplayName(_button)} click={_clickCount}.",
+                    exception);
+                Dispose();
             }
         }
 
@@ -183,7 +261,7 @@ internal sealed class MouseInputService : IMouseInputService
             var effectiveIntervalMs = elapsedMs / Math.Max(1, _clickCount);
             _logger.Info(
                 $"Mouse repeat stopped button={MouseButtonParser.GetDisplayName(_button)} clicks={_clickCount} " +
-                $"elapsedMs={elapsedMs:F0} requestedIntervalMs={_options.IntervalMs} effectiveIntervalMs={effectiveIntervalMs:F2}.");
+                $"elapsedMs={elapsedMs:F0} requestedIntervalMs={_intervalMs} effectiveIntervalMs={effectiveIntervalMs:F2}.");
         }
     }
 

@@ -2,6 +2,7 @@ using HsWin.Core.Alerts;
 using HsWin.Core.Applications;
 using HsWin.Core.Commands;
 using HsWin.Core.Config;
+using HsWin.Core.Hotkeys;
 using HsWin.Core.Http;
 using HsWin.Core.Logging;
 using HsWin.Core.Scripting;
@@ -50,10 +51,18 @@ internal sealed class AppController : IDisposable
     private readonly TrayIconService _trayIconService;
     private readonly Dispatcher _dispatcher;
     private readonly object _scriptReloadGate = new();
+    private readonly IDisposable _emergencyStopHotkey;
 
     private int _reloadGeneration;
     private int _cliInstallInProgress;
+    private int _emergencyStopInProgress;
     private bool _disposed;
+
+    /// <summary>Ctrl+Alt+Shift+Esc — host-owned, not part of config.js.</summary>
+    internal static readonly HotkeyDefinition EmergencyStopHotkeyDefinition =
+        HotkeyDefinition.CreateKeyboard(
+            HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift,
+            0x1B); // VK_ESCAPE
 
     public AppController()
     {
@@ -110,11 +119,16 @@ internal sealed class AppController : IDisposable
         _trayIconService = new TrayIconService(
             openConfig: OpenConfig,
             reloadConfig: ReloadConfig,
+            emergencyStop: EmergencyStop,
             isStartAtLoginEnabled: _startupService.IsEnabled,
             setStartAtLoginEnabled: SetStartAtLoginEnabled,
             isCliInstalled: _cliInstallService.IsInstalled,
             installCli: InstallCli,
             quit: Quit);
+
+        // Host-owned safety hotkey: registered outside config so runaway scripts cannot remove it.
+        _emergencyStopHotkey = _hotkeyService.Register(EmergencyStopHotkeyDefinition, EmergencyStop);
+        _logger.Info("Emergency stop hotkey registered: Ctrl+Alt+Shift+Esc.");
     }
 
     public void Start()
@@ -175,6 +189,75 @@ internal sealed class AppController : IDisposable
         {
             _logger.Error("Open config failed.", exception);
             _toastPresenter.Show(AlertRequest.Create($"Could not open config: {exception.Message}", AlertKind.Error, 6000));
+        }
+    }
+
+    /// <summary>
+    /// Host safety valve: stop all injected input and tear down the script runtime immediately.
+    /// Bound to Ctrl+Alt+Shift+Esc and the tray "Emergency Stop" item. Survives config bugs.
+    /// </summary>
+    public void EmergencyStop()
+    {
+        if (Interlocked.Exchange(ref _emergencyStopInProgress, 1) != 0)
+        {
+            _logger.Info("Emergency stop ignored because a stop is already in progress.");
+            return;
+        }
+
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            _logger.Warning("Emergency stop requested (host safety hotkey/tray).");
+
+            // Host-level input first — does not depend on JavaScript still being alive.
+            try
+            {
+                _mouseInputService.StopActiveRepeat();
+            }
+            catch (Exception exception)
+            {
+                _logger.Error("Emergency stop: mouse StopActiveRepeat failed.", exception);
+            }
+
+            try
+            {
+                _keyboardInputService.StopActiveRepeat();
+            }
+            catch (Exception exception)
+            {
+                _logger.Error("Emergency stop: keyboard StopActiveRepeat failed.", exception);
+            }
+
+            lock (_scriptReloadGate)
+            {
+                _scriptRuntime.EmergencyStop();
+            }
+
+            _toastPresenter.Show(AlertRequest.Create(
+                "Emergency stop: automation halted. Reload config to resume.",
+                AlertKind.Error,
+                6000));
+            _logger.Warning(
+                $"Emergency stop completed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop failed.", exception);
+            try
+            {
+                _toastPresenter.Show(AlertRequest.Create(
+                    $"Emergency stop failed: {exception.Message}",
+                    AlertKind.Error,
+                    6000));
+            }
+            catch
+            {
+                // Last resort: logging already happened.
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _emergencyStopInProgress, 0);
         }
     }
 
@@ -262,6 +345,16 @@ internal sealed class AppController : IDisposable
         _logger.Info("Tray icon disposed.");
         _commandServer.Dispose();
         _logger.Info("Command server disposed.");
+
+        try
+        {
+            _emergencyStopHotkey.Dispose();
+            _logger.Info("Emergency stop hotkey disposed.");
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop hotkey dispose failed.", exception);
+        }
 
         lock (_scriptReloadGate)
         {
