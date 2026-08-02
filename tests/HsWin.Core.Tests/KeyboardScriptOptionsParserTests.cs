@@ -101,5 +101,69 @@ public sealed class KeyboardScriptOptionsParserTests
 
         Assert.Equal(5, options.IntervalMs);
         Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, options.SuppressPhysicalModifiers);
+        Assert.Equal(KeyboardInputMethod.SendInput, options.InputMethod);
+    }
+
+    [Fact]
+    public void ParseRepeatOptionsReadsWindowMessageInputMethod()
+    {
+        var options = KeyboardScriptOptionsParser.ParseRepeatOptions(
+            new Dictionary<string, object?>
+            {
+                ["intervalMs"] = 20,
+                ["inputMethod"] = "windowMessage",
+                ["keyDownMs"] = 8
+            });
+
+        Assert.Equal(20, options.IntervalMs);
+        Assert.Equal(KeyboardInputMethod.WindowMessage, options.InputMethod);
+        Assert.Equal(8, options.KeyDownMs);
+    }
+
+    [Theory]
+    [InlineData("holdMs")]
+    [InlineData("pressDurationMs")]
+    public void ParseRepeatOptionsReadsKeyDownDurationAliases(string optionName)
+    {
+        var options = KeyboardScriptOptionsParser.ParseRepeatOptions(
+            new Dictionary<string, object?>
+            {
+                ["intervalMs"] = 100,
+                [optionName] = 60
+            });
+
+        Assert.Equal(60, options.KeyDownMs);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(20)]
+    [InlineData(21)]
+    public void ParseRepeatOptionsRejectsInvalidKeyDownDuration(int keyDownMs)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            KeyboardScriptOptionsParser.ParseRepeatOptions(
+                new Dictionary<string, object?>
+                {
+                    ["intervalMs"] = 20,
+                    ["keyDownMs"] = keyDownMs
+                }));
+    }
+
+    [Fact]
+    public void ParseTapOptionsReadsWindowMessageInputMethod()
+    {
+        var options = KeyboardScriptOptionsParser.ParseTapOptions(
+            new Dictionary<string, object?> { ["method"] = "postMessage" });
+
+        Assert.Equal(KeyboardInputMethod.WindowMessage, options.InputMethod);
+    }
+
+    [Fact]
+    public void ParseRepeatOptionsRejectsUnknownInputMethod()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            KeyboardScriptOptionsParser.ParseRepeatOptions(
+                new Dictionary<string, object?> { ["inputMethod"] = "unknown" }));
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 
@@ -5,6 +6,13 @@ namespace HsWin.App.Keyboard;
 
 internal sealed class KeyboardWatchDispatcher
 {
+    /// <summary>
+    /// Soft budget for blocking keyboard callbacks on the LL hook path. Exceeding this logs a
+    /// warning but still returns the callback result (keeps existing UX). Extreme hangs are
+    /// mitigated by the host emergency-stop priority handler on the same hook.
+    /// </summary>
+    internal static readonly TimeSpan BlockingCallbackWarnAfter = TimeSpan.FromMilliseconds(8);
+
     private readonly IRuntimeLogger _logger;
     private readonly IKeyboardWatchCallbackScheduler _scheduler;
 
@@ -52,16 +60,20 @@ internal sealed class KeyboardWatchDispatcher
 
     private bool InvokeBlocking(KeyboardWatchSubscription subscription, KeyboardEventSnapshot snapshot)
     {
+        var startedAt = Stopwatch.GetTimestamp();
         try
         {
             var shouldSwallow = subscription.Callback(snapshot);
-            if (shouldSwallow)
+            var elapsed = Stopwatch.GetElapsedTime(startedAt);
+            if (elapsed > BlockingCallbackWarnAfter)
             {
-                _logger.Info(
-                    $"Keyboard watch requested swallow id={subscription.Id} key='{snapshot.Key}' type='{snapshot.Type}' " +
-                    $"vk=0x{snapshot.KeyCode:X2} modifiers='{string.Join(",", snapshot.Modifiers)}'.");
+                _logger.Warning(
+                    $"Blocking keyboard watch was slow id={subscription.Id} key='{snapshot.Key}' " +
+                    $"elapsedMs={elapsed.TotalMilliseconds:F1}. Prefer key filters and keep callbacks tiny; " +
+                    "use Ctrl+Alt+Shift+Esc emergency stop if input freezes.");
             }
 
+            // Swallow decisions are intentionally not Info-logged per key (hot path).
             return shouldSwallow;
         }
         catch (Exception exception)

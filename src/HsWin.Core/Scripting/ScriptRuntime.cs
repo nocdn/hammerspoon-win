@@ -160,6 +160,31 @@ public sealed class ScriptRuntime : IDisposable
     }
 
     /// <summary>
+    /// Interrupts a runaway V8 callback without disposing resources. Safe to call without holding
+    /// the app reload gate for long (still must not race concurrent Execute without coordination).
+    /// </summary>
+    public void InterruptEngineOnly()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var engine = _engine;
+        if (engine is null)
+        {
+            return;
+        }
+
+        try
+        {
+            engine.Interrupt();
+            _services.Logger.Warning("ScriptRuntime InterruptEngineOnly: V8 interrupt signaled.");
+        }
+        catch (Exception exception)
+        {
+            _services.Logger.Warning($"ScriptRuntime InterruptEngineOnly failed. {exception.Message}");
+        }
+    }
+
+    /// <summary>
     /// Immediately stops script automation: interrupts the V8 engine if possible, disposes all
     /// tracked resources (hotkeys, watches, timers, repeats, etc.), and tears down the engine.
     /// The runtime stays usable so a later <see cref="Reload"/> can restore config.
@@ -169,22 +194,11 @@ public sealed class ScriptRuntime : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _services.Logger.Warning("ScriptRuntime emergency stop: interrupting engine and disposing all script resources.");
-
-        var engine = _engine;
-        if (engine is not null)
-        {
-            try
-            {
-                // Abort a runaway script callback if one is currently executing.
-                engine.Interrupt();
-            }
-            catch (Exception exception)
-            {
-                _services.Logger.Warning($"ScriptRuntime emergency stop: engine interrupt failed. {exception.Message}");
-            }
-        }
-
+        InterruptEngineOnly();
+        // Drop tracked resources first so timers/hotkeys stop scheduling new work into a dying engine.
         DisposeRuntimeResources();
+        // Brief pause so a blocking invoke that received Interrupt can unwind before Dispose.
+        Thread.Sleep(25);
         DisposeEngine();
         _services.Logger.Warning("ScriptRuntime emergency stop completed. Reload config to resume automation.");
     }

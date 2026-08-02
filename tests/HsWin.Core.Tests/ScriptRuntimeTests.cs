@@ -1767,7 +1767,7 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
-    public void ReloadExposesKeyboardRepeat()
+    public void ReloadExposesKeyboardRepeatPulse()
     {
         var presenter = new CapturingAlertPresenter();
         var keyboardInput = new CapturingKeyboardInputService();
@@ -1782,12 +1782,85 @@ public sealed class ScriptRuntimeTests
             NullScriptTimerService.Instance,
             NullRuntimeLogger.Instance);
 
-        runtime.Reload("""hs.keyboard.repeat("w", { intervalMs: 5, suppressPhysicalModifiers: ["alt", "shift"] });""");
+        runtime.Reload("""
+            hs.keyboard.repeatPulse("w", {
+              intervalMs: 120,
+              keyDownMs: 60,
+              inputMethod: "windowMessage",
+              suppressPhysicalModifiers: ["alt", "shift"]
+            });
+            """);
 
         var repeat = Assert.Single(keyboardInput.Repeats);
         Assert.Equal((uint)'W', repeat.VirtualKey);
-        Assert.Equal(5, repeat.Options.IntervalMs);
+        Assert.Equal(120, repeat.Options.IntervalMs);
+        Assert.Equal(60, repeat.Options.KeyDownMs);
+        Assert.Equal(KeyboardInputMethod.WindowMessage, repeat.Options.InputMethod);
         Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, repeat.Options.SuppressPhysicalModifiers);
+    }
+
+    [Fact]
+    public void KeyboardRepeatRejectsInstantaneousModifierAndLogsWarning()
+    {
+        var logger = new CapturingRuntimeLogger();
+        using var runtime = new ScriptRuntime(
+            new CapturingAlertPresenter(),
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            new CapturingKeyboardInputService(),
+            NullScriptTimerService.Instance,
+            logger);
+
+        var exception = Assert.ThrowsAny<Exception>(() =>
+            runtime.Reload("""hs.keyboard.repeat("shift", { intervalMs: 120 });"""));
+
+        Assert.Contains("repeatPulse", exception.ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            logger.Warnings,
+            warning => warning.Contains("Rejected instantaneous modifier repeat", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void KeyboardRepeatPulseRequiresPositiveKeyDownDuration()
+    {
+        using var runtime = new ScriptRuntime(
+            new CapturingAlertPresenter(),
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            new CapturingKeyboardInputService(),
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        var exception = Assert.ThrowsAny<Exception>(() =>
+            runtime.Reload("""hs.keyboard.repeatPulse("w", { intervalMs: 120 });"""));
+
+        Assert.Contains("keyDownMs", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void KeyboardRepeatDirectsHeldDurationsToRepeatPulse()
+    {
+        using var runtime = new ScriptRuntime(
+            new CapturingAlertPresenter(),
+            NullHotkeyRegistrar.Instance,
+            NullScriptConsoleLogger.Instance,
+            NullApplicationProvider.Instance,
+            NullMediaController.Instance,
+            NullKeyboardEventService.Instance,
+            new CapturingKeyboardInputService(),
+            NullScriptTimerService.Instance,
+            NullRuntimeLogger.Instance);
+
+        var exception = Assert.ThrowsAny<Exception>(() =>
+            runtime.Reload("""hs.keyboard.repeat("w", { intervalMs: 120, keyDownMs: 60 });"""));
+
+        Assert.Contains("repeatPulse", exception.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2536,9 +2609,9 @@ public sealed class ScriptRuntimeTests
             Taps.Add(new CapturingTap(virtualKey, options));
         }
 
-        public IDisposable Repeat(uint virtualKey, KeyboardRepeatOptions options)
+        public IKeyboardRepeatSession Repeat(uint virtualKey, KeyboardRepeatOptions options)
         {
-            var registration = new CapturingDisposable();
+            var registration = new CapturingKeyboardRepeatSession(options.IntervalMs);
             Repeats.Add(new CapturingRepeat(virtualKey, options, registration));
             return registration;
         }
@@ -2548,12 +2621,36 @@ public sealed class ScriptRuntimeTests
         }
     }
 
+    private sealed class CapturingKeyboardRepeatSession : IKeyboardRepeatSession
+    {
+        private readonly CapturingDisposable _disposable = new();
+
+        public CapturingKeyboardRepeatSession(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
+        public int IntervalMs { get; private set; }
+
+        public bool IsDisposed => _disposable.IsDisposed;
+
+        public void SetIntervalMs(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
+        public void Dispose()
+        {
+            _disposable.Dispose();
+        }
+    }
+
     private sealed record CapturingTap(uint VirtualKey, KeyboardTapOptions Options);
 
     private sealed record CapturingRepeat(
         uint VirtualKey,
         KeyboardRepeatOptions Options,
-        CapturingDisposable Registration);
+        CapturingKeyboardRepeatSession Registration);
 
     private sealed class CapturingScriptTimerService : IScriptTimerService
     {

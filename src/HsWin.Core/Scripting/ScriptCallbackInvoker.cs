@@ -7,6 +7,16 @@ namespace HsWin.Core.Scripting;
 
 internal sealed class ScriptCallbackInvoker
 {
+    /// <summary>
+    /// When a low-level hook thread needs the script gate, wait at most this long then fail-open
+    /// so physical input cannot stall behind a wedged UI callback forever.
+    /// Tuned for light contention without dropping normal short hotkey work.
+    /// </summary>
+    internal static readonly TimeSpan HookPathGateTimeout = TimeSpan.FromMilliseconds(30);
+
+    /// <summary>Only log routine start/complete when work exceeds this (reduces hot-path noise).</summary>
+    private static readonly TimeSpan SlowCallbackLogThreshold = TimeSpan.FromMilliseconds(10);
+
     private readonly object _callbackGate = new();
     private readonly IAlertPresenter _alerts;
     private readonly IRuntimeLogger _logger;
@@ -23,39 +33,102 @@ internal sealed class ScriptCallbackInvoker
         lock (_callbackGate)
         {
             var startedAt = Stopwatch.GetTimestamp();
-            _logger.Info($"Script hotkey callback started waitMs={Stopwatch.GetElapsedTime(queuedAt, startedAt).TotalMilliseconds:F3}.");
+            var waitMs = Stopwatch.GetElapsedTime(queuedAt, startedAt).TotalMilliseconds;
             try
             {
                 scriptFunction.Invoke(asConstructor: false);
-                _logger.Info($"Script hotkey callback completed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
+                LogIfSlow("Script hotkey callback", waitMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds, args: null);
             }
             catch (Exception exception)
             {
-                _logger.Warning($"Script hotkey callback failed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. {exception.Message}");
+                _logger.Warning(
+                    $"Script hotkey callback failed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. {exception.Message}");
                 _alerts.Show(AlertRequest.Create($"Hotkey callback error: {exception.Message}", AlertKind.Error, 7000));
             }
         }
     }
 
+    /// <summary>
+    /// Invokes a script callback, waiting for the gate (UI / scheduled work). Prefer this off the hook path.
+    /// </summary>
     public object? InvokeScriptCallback(ScriptObject scriptFunction, params object?[] args)
     {
         var queuedAt = Stopwatch.GetTimestamp();
         lock (_callbackGate)
         {
-            var startedAt = Stopwatch.GetTimestamp();
-            _logger.Info($"Script callback started args={args.Length} waitMs={Stopwatch.GetElapsedTime(queuedAt, startedAt).TotalMilliseconds:F3}.");
-            try
+            return InvokeUnderGate(scriptFunction, args, queuedAt);
+        }
+    }
+
+    /// <summary>
+    /// Hook-path invoke: if the script gate is busy longer than <see cref="HookPathGateTimeout"/>,
+    /// returns false without running JS so WH_*_LL handlers fail open.
+    /// </summary>
+    public object? InvokeScriptCallbackFailOpen(ScriptObject scriptFunction, params object?[] args)
+    {
+        _ = TryInvokeScriptCallbackFailOpen(scriptFunction, out var result, args);
+        return result;
+    }
+
+    /// <summary>
+    /// Hook-path invoke with explicit skip detection.
+    /// Returns false if the gate was busy (callback not run); true if the callback ran (even if it threw/returned false).
+    /// </summary>
+    public bool TryInvokeScriptCallbackFailOpen(ScriptObject scriptFunction, out object? result, params object?[] args)
+    {
+        var queuedAt = Stopwatch.GetTimestamp();
+        var lockTaken = false;
+        try
+        {
+            Monitor.TryEnter(_callbackGate, HookPathGateTimeout, ref lockTaken);
+            if (!lockTaken)
             {
-                var result = scriptFunction.Invoke(asConstructor: false, args);
-                _logger.Info($"Script callback completed args={args.Length} elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
-                return result;
-            }
-            catch (Exception exception)
-            {
-                _logger.Warning($"Script callback failed args={args.Length} elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. {exception.Message}");
-                _alerts.Show(AlertRequest.Create($"Callback error: {exception.Message}", AlertKind.Error, 7000));
+                _logger.Warning(
+                    $"Script callback skipped args={args.Length}: gate busy after {HookPathGateTimeout.TotalMilliseconds:F0}ms (fail-open on hook path).");
+                result = false;
                 return false;
             }
+
+            result = InvokeUnderGate(scriptFunction, args, queuedAt);
+            return true;
         }
+        finally
+        {
+            if (lockTaken)
+            {
+                Monitor.Exit(_callbackGate);
+            }
+        }
+    }
+
+    private object? InvokeUnderGate(ScriptObject scriptFunction, object?[] args, long queuedAt)
+    {
+        var startedAt = Stopwatch.GetTimestamp();
+        var waitMs = Stopwatch.GetElapsedTime(queuedAt, startedAt).TotalMilliseconds;
+        try
+        {
+            var invokeResult = scriptFunction.Invoke(asConstructor: false, args);
+            LogIfSlow("Script callback", waitMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds, args.Length);
+            return invokeResult;
+        }
+        catch (Exception exception)
+        {
+            _logger.Warning(
+                $"Script callback failed args={args.Length} elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}. {exception.Message}");
+            _alerts.Show(AlertRequest.Create($"Callback error: {exception.Message}", AlertKind.Error, 7000));
+            return false;
+        }
+    }
+
+    private void LogIfSlow(string label, double waitMs, double elapsedMs, int? args)
+    {
+        if (waitMs < SlowCallbackLogThreshold.TotalMilliseconds
+            && elapsedMs < SlowCallbackLogThreshold.TotalMilliseconds)
+        {
+            return;
+        }
+
+        var argsPart = args is null ? string.Empty : $" args={args}";
+        _logger.Info($"{label} completed{argsPart} waitMs={waitMs:F3} elapsedMs={elapsedMs:F3}.");
     }
 }

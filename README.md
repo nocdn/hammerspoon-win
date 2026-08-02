@@ -12,9 +12,9 @@ Right-click the notification area icon:
 
 - **Open Config** — opens `%APPDATA%\HsWin\config.js` in your default editor (creates the default file first if missing).
 - **Reload Config** — reloads `config.js` on a background thread (shows reload toasts; same engine reset as startup reload).
-- **Emergency Stop (Ctrl+Alt+Shift+Esc)** — host safety valve: immediately stops mouse/keyboard auto-repeat, interrupts the JavaScript engine, and disposes all config hotkeys, watches, and timers. Automation stays off until you **Reload Config**. This hotkey is registered by the host itself (not `config.js`), so a buggy config cannot remove it.
+- **Emergency Stop (Ctrl+Alt+Shift+Esc)** — host safety valve: immediately stops mouse/keyboard auto-repeat, interrupts the JavaScript engine, and disposes all config hotkeys, watches, and timers. Automation stays off until you **Reload Config**. The chord is handled on the low-level keyboard hook **before** any config watchers (so it still works when the UI/script thread is wedged); the tray item is a second entry point.
 - **Start at Login** — toggles whether HsWin starts when you sign in to Windows.
-- **Install hspn CLI** — adds the installed app directory to your user `PATH` so new terminals can run `hspn` (shows installing and success/error toasts).
+- **Install CLI** — adds the installed app directory to your user `PATH` so new terminals can run `hspn` (shows installing and success/error toasts).
 - **Version** — shows the version of the currently running HsWin process.
 - **Quit** — exits the app.
 
@@ -22,16 +22,20 @@ Right-click the notification area icon:
 
 If automation runs away (for example a stuck mouse-repeat), press **Ctrl+Alt+Shift+Esc** or choose **Emergency Stop** from the tray menu. That:
 
-1. Stops any active `hs.mouse.repeat` / `hs.keyboard.repeat` at the host layer
+1. **Immediately** stops any active `hs.mouse.repeat` / `hs.keyboard.repeat` at the host layer (does not wait on script locks)
 2. Interrupts the V8 engine if a script callback is mid-execution
 3. Disposes every script-owned resource (hotkeys, scroll watches, timers, etc.)
-4. Shows an error toast: automation is halted until you reload config
+4. Shows a short **Stopped** toast; reload config when you want automation again
+
+The chord is registered two ways: on the host keyboard hook (ahead of config, for when the UI is wedged) and via `RegisterHotKey` (for when the keyboard hook thread itself is stuck in a blocking script callback). Tray **Emergency Stop** is a third entry point. Injected input is always stopped first; full script teardown runs off the UI thread.
+
+Blocking keyboard watches fail open (pass the key through) if the script gate is busy for more than ~30ms, so a slow toast/hotkey callback cannot freeze the keyboard. Prefer key filters and tiny blocking callbacks.
 
 `Ctrl+Alt+Shift+Esc` is reserved for this host feature; avoid binding the same combo in `config.js`.
 
 ## Command line
 
-The optional `hspn` CLI ships with the app but is not added to `PATH` until you choose **Install hspn CLI** from the tray menu. It installs per-user and does not require administrator elevation. Open a new terminal after installing so Windows picks up the updated `PATH`.
+The optional `hspn` CLI ships with the app but is not added to `PATH` until you choose **Install CLI** from the tray menu. It installs per-user and does not require administrator elevation. Open a new terminal after installing so Windows picks up the updated `PATH`.
 
 ```powershell
 hspn --help
@@ -655,7 +659,7 @@ hs.keyboard.remap("pageup", "end");
 hs.keyboard.remap("pagedown", "home");
 ```
 
-### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
+### `hs.keyboard.tap(key, options?)`, `hs.keyboard.repeat(key, options?)`, `hs.keyboard.repeatPulse(key, options)`, `hs.keyboard.keyDown(key)`, `hs.keyboard.keyUp(key)`, `hs.keyboard.isDown(key)`
 
 Sends or queries keyboard input. `key` accepts the same keyboard key names as `hs.hotkey.bind`, or a numeric virtual-key code (0–255).
 
@@ -663,6 +667,13 @@ Sends or queries keyboard input. `key` accepts the same keyboard key names as `h
 hs.keyboard.tap("w");
 hs.keyboard.tap("right", { modifiers: ["win", "shift"] });
 const repeat = hs.keyboard.repeat("w", { intervalMs: 15 });
+// Continuous game actions need a visible key-down phase, not an instantaneous tap:
+const gameRepeat = hs.keyboard.repeatPulse("shift", {
+  intervalMs: 120,
+  keyDownMs: 60,
+  inputMethod: "sendInput",
+  suppressPhysicalModifiers: ["ctrl", "shift"]
+});
 repeat.stop();
 hs.keyboard.keyDown("shift");
 hs.keyboard.keyUp("shift");
@@ -672,7 +683,7 @@ if (hs.keyboard.isDown("alt")) {
 }
 ```
 
-`tap` uses `SendInput`, which is the supported Win32 input injection API. When called inside a blocking `hs.keyboard.watch` callback, HsWin queues the injected input until the hook callback returns so the physical key can be swallowed first. For ordinary key-to-key remaps, use `hs.keyboard.remap` instead. Pass `modifiers` / `withModifiers` / `holdModifiers` to hold modifiers while tapping the key. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
+`tap` defaults to `SendInput`, the supported Win32 global input injection API. `repeat` emits immediate taps and rejects modifier keys because an instantaneous modifier transition is generally unobservable. For continuously sampled actions, use `repeatPulse` with a positive `keyDownMs` so the application observes a held phase. Pass `inputMethod: "windowMessage"` (aliases: `window-message`, `postMessage`, `window`) only as an alternate delivery path for applications that ignore injected input but process posted `WM_KEYDOWN`/`WM_KEYUP`; some GLFW applications do not update gameplay state from posted messages. When called inside a blocking `hs.keyboard.watch` callback, HsWin queues the injected input until the hook callback returns so the physical key can be swallowed first. For ordinary key-to-key remaps, use `hs.keyboard.remap` instead. Pass `modifiers` / `withModifiers` / `holdModifiers` to hold modifiers while tapping the key. To use modifiers as a trigger chord while sending a plain key, temporarily suppress them around the tap:
 
 ```js
 hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
@@ -680,9 +691,11 @@ hs.keyboard.tap(event.keyCode, { suppressPhysicalModifiers: ["alt", "shift"] });
 
 Aliases for `suppressPhysicalModifiers` are `suppressModifiers` and `withoutModifiers`.
 
-`repeat` options are `intervalMs`/`interval` (default `10`, allowed range `1`–`1000`) plus the same `suppressPhysicalModifiers` / `suppressModifiers` / `withoutModifiers` aliases as `tap`.
+For modifier keys, `hs.keyboard.isDown` uses the low-level hook's physical-key tracker while the hook is active. Injected key-up events used by `suppressPhysicalModifiers` therefore do not make a physically held Ctrl, Shift, Alt, or Win key appear released to script lifecycle checks.
 
-`repeat` runs the tap loop natively and logs start/stop performance summaries including the effective interval. It is much faster than implementing a high-frequency repeat loop in JavaScript with `hs.timer.doEvery`. The host keeps only one active native repeat at a time, replaces any previous repeat when a new one starts, releases suppressed modifiers without re-pressing them on every tick, and auto-stops a repeat after 5 seconds as a runaway safety net. Returned handles support `stop()`, `dispose()`, and `delete()` (any casing).
+Both repeat APIs accept `intervalMs`/`interval` (default `10`, allowed range `1`–`1000`), the same `suppressPhysicalModifiers` / `suppressModifiers` / `withoutModifiers` aliases as `tap`, and optional `inputMethod` / `method` (`sendInput` default, or `windowMessage`). `repeatPulse` additionally requires `keyDownMs` (aliases: `holdMs`, `pressDurationMs`) greater than `0` and less than `intervalMs`; `repeat` rejects held-duration options so tap and pulse semantics cannot be confused. The repeat handle supports `setIntervalMs(ms)` / `intervalMs` to change rate without restarting; pulse intervals must remain greater than `keyDownMs`. `hs.keyboard.stopRepeat()` force-stops the active keyboard repeat session.
+
+`repeat` and `repeatPulse` run natively and log start/stop performance summaries including the effective interval. They are much faster than implementing a high-frequency loop in JavaScript with `hs.timer.doEvery`. The host keeps only one active native repeat at a time, replaces any previous repeat when a new one starts, and releases suppressed modifiers without re-pressing them on every tick. While a repeat is active, suppressed physical modifiers also have a native hook fallback so they cannot leak merely because the JavaScript callback gate is busy. Window-message repeats release those modifiers in both global input state and the target window's message state. Returned handles support `stop()`, `dispose()`, and `delete()` (any casing).
 
 ### `hs.timer.doAfter(delayMs, callback)`, `hs.timer.doEvery(intervalMs, callback)`
 

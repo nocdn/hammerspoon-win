@@ -56,7 +56,10 @@ public static class HotkeyParser
             ["grave"] = 0xC0,
             ["leftbracket"] = 0xDB,
             ["rightbracket"] = 0xDD,
-            ["backslash"] = 0xDC
+            ["backslash"] = 0xDC,
+            ["shift"] = 0x10,
+            ["control"] = 0x11,
+            ["ctrl"] = 0x11
         };
 
     private static readonly IReadOnlyDictionary<string, HotkeyMouseButton> MouseButtonAliases =

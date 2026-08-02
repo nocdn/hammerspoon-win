@@ -728,6 +728,14 @@
         return host.Keyboard.Repeat(key, options);
       },
 
+      repeatPulse(key, options) {
+        return host.Keyboard.RepeatPulse(key, options);
+      },
+
+      stopRepeat() {
+        host.Keyboard.StopRepeat();
+      },
+
       keyDown(key) {
         host.Keyboard.KeyDown(key);
       },

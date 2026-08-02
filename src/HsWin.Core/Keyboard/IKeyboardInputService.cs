@@ -8,7 +8,7 @@ public interface IKeyboardInputService
 
     void Tap(uint virtualKey, KeyboardTapOptions options);
 
-    IDisposable Repeat(uint virtualKey, KeyboardRepeatOptions options);
+    IKeyboardRepeatSession Repeat(uint virtualKey, KeyboardRepeatOptions options);
 
     /// <summary>
     /// Stops the active global keyboard-repeat session, if any. Safe to call when idle.

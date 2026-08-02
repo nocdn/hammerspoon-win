@@ -154,7 +154,8 @@ public sealed class HotkeyScriptApi
             if (_active && ShouldRelease(snapshot))
             {
                 _active = false;
-                _callbacks.InvokeScriptCallback(_releasedFunction, ScriptJson.Serialize(snapshot));
+                // Always attempt release; fail-open still clears host active state so keys are not stuck swallowed.
+                _ = InvokeHeldCallback(_releasedFunction, snapshot);
                 return _options.Blocking;
             }
 
@@ -162,14 +163,32 @@ public sealed class HotkeyScriptApi
             {
                 if (!_active || _options.Repeat)
                 {
+                    if (!InvokeHeldCallback(_pressedFunction, snapshot))
+                    {
+                        // Fail-open: do not mark active and do not swallow — pass the key through.
+                        return false;
+                    }
+
                     _active = true;
-                    _callbacks.InvokeScriptCallback(_pressedFunction, ScriptJson.Serialize(snapshot));
                 }
 
                 return _options.Blocking;
             }
 
             return false;
+        }
+
+        /// <returns>false when a blocking fail-open skip occurred (script gate busy).</returns>
+        private bool InvokeHeldCallback(ScriptObject function, KeyboardEventSnapshot snapshot)
+        {
+            var eventJson = ScriptJson.Serialize(snapshot);
+            if (_options.Blocking)
+            {
+                return _callbacks.TryInvokeScriptCallbackFailOpen(function, out _, eventJson);
+            }
+
+            _callbacks.InvokeScriptCallback(function, eventJson);
+            return true;
         }
 
         private bool ShouldRelease(KeyboardEventSnapshot snapshot)

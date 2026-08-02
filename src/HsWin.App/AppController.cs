@@ -4,6 +4,7 @@ using HsWin.Core.Commands;
 using HsWin.Core.Config;
 using HsWin.Core.Hotkeys;
 using HsWin.Core.Http;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using HsWin.Core.Scripting;
 using HsWin.App.Audio;
@@ -56,13 +57,16 @@ internal sealed class AppController : IDisposable
     private int _reloadGeneration;
     private int _cliInstallInProgress;
     private int _emergencyStopInProgress;
+    private int _emergencyStopChordLatched;
     private bool _disposed;
+
+    private const uint EmergencyStopVirtualKey = 0x1B; // VK_ESCAPE
+    private const HotkeyModifiers EmergencyStopModifiers =
+        HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift;
 
     /// <summary>Ctrl+Alt+Shift+Esc — host-owned, not part of config.js.</summary>
     internal static readonly HotkeyDefinition EmergencyStopHotkeyDefinition =
-        HotkeyDefinition.CreateKeyboard(
-            HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift,
-            0x1B); // VK_ESCAPE
+        HotkeyDefinition.CreateKeyboard(EmergencyStopModifiers, EmergencyStopVirtualKey);
 
     public AppController()
     {
@@ -72,9 +76,9 @@ internal sealed class AppController : IDisposable
         _singleInstanceGuard = SingleInstanceGuard.Acquire(_logger);
         _scriptConsoleLogger = new ReloadScriptConsoleLogger(paths.ConfigLogDirectory);
         _toastPresenter = new ToastPresenter(_logger);
-        _hotkeyService = new NativeHotkeyService(_logger);
         _keyboardEventService = new NativeKeyboardEventService(_logger);
-        _keyboardInputService = new KeyboardInputService(_logger);
+        _hotkeyService = new NativeHotkeyService(_logger, _keyboardEventService);
+        _keyboardInputService = new KeyboardInputService(_logger, _keyboardEventService);
         _mouseInputService = new MouseInputService(_logger);
         _timerService = new DispatcherScriptTimerService(WpfApplication.Current.Dispatcher);
         _clipboardService = new NativeClipboardService(WpfApplication.Current.Dispatcher, _logger);
@@ -126,9 +130,12 @@ internal sealed class AppController : IDisposable
             installCli: InstallCli,
             quit: Quit);
 
-        // Host-owned safety hotkey: registered outside config so runaway scripts cannot remove it.
+        // Dual path for emergency stop:
+        // 1) WH_KEYBOARD_LL priority (works when UI is wedged; swallows the chord before config)
+        // 2) RegisterHotKey (works when the LL hook thread is stuck inside a blocking JS callback)
+        _keyboardEventService.SetHostPriorityHandler(TryHandleEmergencyStopKey);
         _emergencyStopHotkey = _hotkeyService.Register(EmergencyStopHotkeyDefinition, EmergencyStop);
-        _logger.Info("Emergency stop hotkey registered: Ctrl+Alt+Shift+Esc.");
+        _logger.Info("Emergency stop registered: Ctrl+Alt+Shift+Esc (keyboard hook + RegisterHotKey).");
     }
 
     public void Start()
@@ -193,71 +200,219 @@ internal sealed class AppController : IDisposable
     }
 
     /// <summary>
-    /// Host safety valve: stop all injected input and tear down the script runtime immediately.
-    /// Bound to Ctrl+Alt+Shift+Esc and the tray "Emergency Stop" item. Survives config bugs.
+    /// Host safety valve: stop all injected input immediately, then tear down the script runtime
+    /// on a ThreadPool worker (never block the tray UI). Bound to Ctrl+Alt+Shift+Esc and tray.
     /// </summary>
     public void EmergencyStop()
     {
-        if (Interlocked.Exchange(ref _emergencyStopInProgress, 1) != 0)
+        RequestEmergencyStop(source: "tray/RegisterHotKey");
+    }
+
+    /// <summary>
+    /// Keyboard-hook path: match Ctrl+Alt+Shift+Esc, kill injection on this thread, schedule full stop.
+    /// Returns true to swallow the key so games/apps never see it.
+    /// </summary>
+    private bool TryHandleEmergencyStopKey(KeyboardEventSnapshot snapshot)
+    {
+        if (snapshot.IsInjected)
         {
-            _logger.Info("Emergency stop ignored because a stop is already in progress.");
+            return false;
+        }
+
+        // Clear latch on Escape key-up so a later press can trigger again.
+        if (snapshot.IsKeyUp && snapshot.KeyCode == EmergencyStopVirtualKey)
+        {
+            Volatile.Write(ref _emergencyStopChordLatched, 0);
+            return false;
+        }
+
+        if (!snapshot.IsKeyDown || snapshot.KeyCode != EmergencyStopVirtualKey)
+        {
+            return false;
+        }
+
+        var modifiers = (HotkeyModifiers)snapshot.ModifierFlags;
+        if ((modifiers & EmergencyStopModifiers) != EmergencyStopModifiers)
+        {
+            return false;
+        }
+
+        // Debounce auto-repeat while Esc is held.
+        if (Interlocked.Exchange(ref _emergencyStopChordLatched, 1) != 0)
+        {
+            return true;
+        }
+
+        _logger.Warning("Emergency stop chord matched on keyboard hook (Ctrl+Alt+Shift+Esc).");
+        RequestEmergencyStop(source: "keyboard-hook");
+        return true;
+    }
+
+    private void RequestEmergencyStop(string source)
+    {
+        // Always kill injected input first — even if a full stop is already in progress.
+        KillInjectedInputImmediate();
+
+        if (Interlocked.CompareExchange(ref _emergencyStopInProgress, 1, 0) != 0)
+        {
+            _logger.Info($"Emergency stop ({source}): input killed; full teardown already in progress.");
             return;
         }
 
-        var startedAt = Stopwatch.GetTimestamp();
+        _logger.Warning($"Emergency stop requested ({source}).");
         try
         {
-            _logger.Warning("Emergency stop requested (host safety hotkey/tray).");
-
-            // Host-level input first — does not depend on JavaScript still being alive.
-            try
+            if (!ThreadPool.QueueUserWorkItem(static state => ((AppController)state!).RunEmergencyStopWorker(), this))
             {
-                _mouseInputService.StopActiveRepeat();
+                _logger.Warning("Emergency stop: ThreadPool.QueueUserWorkItem returned false; running teardown inline.");
+                RunEmergencyStopWorker();
             }
-            catch (Exception exception)
-            {
-                _logger.Error("Emergency stop: mouse StopActiveRepeat failed.", exception);
-            }
-
-            try
-            {
-                _keyboardInputService.StopActiveRepeat();
-            }
-            catch (Exception exception)
-            {
-                _logger.Error("Emergency stop: keyboard StopActiveRepeat failed.", exception);
-            }
-
-            lock (_scriptReloadGate)
-            {
-                _scriptRuntime.EmergencyStop();
-            }
-
-            _toastPresenter.Show(AlertRequest.Create(
-                "Emergency stop: automation halted. Reload config to resume.",
-                AlertKind.Error,
-                6000));
-            _logger.Warning(
-                $"Emergency stop completed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
         }
         catch (Exception exception)
         {
-            _logger.Error("Emergency stop failed.", exception);
+            Interlocked.Exchange(ref _emergencyStopInProgress, 0);
+            _logger.Error("Emergency stop: failed to queue worker.", exception);
+            // Still attempt inline teardown so a queue failure is not a dead end.
             try
             {
-                _toastPresenter.Show(AlertRequest.Create(
-                    $"Emergency stop failed: {exception.Message}",
-                    AlertKind.Error,
-                    6000));
+                RunEmergencyStopWorker();
             }
-            catch
+            catch (Exception inlineException)
             {
-                // Last resort: logging already happened.
+                _logger.Error("Emergency stop: inline teardown failed.", inlineException);
+            }
+        }
+    }
+
+    private void RunEmergencyStopWorker()
+    {
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            KillInjectedInputImmediate();
+            TeardownScriptRuntimeBestEffort();
+            if (!_disposed)
+            {
+                ShowEmergencyStopToast("Stopped");
+            }
+
+            _logger.Warning(
+                $"Emergency stop worker completed elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop worker failed.", exception);
+            if (!_disposed)
+            {
+                ShowEmergencyStopToast($"Emergency stop failed: {exception.Message}");
             }
         }
         finally
         {
             Interlocked.Exchange(ref _emergencyStopInProgress, 0);
+        }
+    }
+
+    private void KillInjectedInputImmediate()
+    {
+        try
+        {
+            _mouseInputService.StopActiveRepeat();
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop: mouse StopActiveRepeat failed.", exception);
+        }
+
+        try
+        {
+            _keyboardInputService.StopActiveRepeat();
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop: keyboard StopActiveRepeat failed.", exception);
+        }
+    }
+
+    private void TeardownScriptRuntimeBestEffort()
+    {
+        var lockTaken = false;
+        try
+        {
+            // Do not hang forever if ReloadConfig holds the gate on a stuck Execute.
+            Monitor.TryEnter(_scriptReloadGate, TimeSpan.FromMilliseconds(500), ref lockTaken);
+            if (!lockTaken)
+            {
+                _logger.Warning(
+                    "Emergency stop: script reload gate busy; interrupting engine without full lock, then retrying dispose.");
+                try
+                {
+                    // Interrupt is safe without the gate; dispose still needs exclusive access.
+                    _scriptRuntime.InterruptEngineOnly();
+                }
+                catch (Exception exception)
+                {
+                    _logger.Error("Emergency stop: InterruptEngineOnly failed.", exception);
+                }
+
+                Monitor.TryEnter(_scriptReloadGate, TimeSpan.FromSeconds(2), ref lockTaken);
+            }
+
+            if (lockTaken)
+            {
+                _scriptRuntime.EmergencyStop();
+            }
+            else
+            {
+                _logger.Warning(
+                    "Emergency stop: could not acquire script gate for full teardown; injected input is stopped. Reload or quit the app.");
+            }
+        }
+        finally
+        {
+            if (lockTaken)
+            {
+                Monitor.Exit(_scriptReloadGate);
+            }
+        }
+    }
+
+    private void ShowEmergencyStopToast(string message)
+    {
+        // Success path uses a short plain toast; failures stay error-styled.
+        var kind = string.Equals(message, "Stopped", StringComparison.Ordinal)
+            ? AlertKind.Normal
+            : AlertKind.Error;
+        var durationMs = kind == AlertKind.Normal ? 2000 : 6000;
+
+        try
+        {
+            if (_dispatcher.CheckAccess())
+            {
+                _toastPresenter.Show(AlertRequest.Create(message, kind, durationMs));
+                return;
+            }
+
+            _ = _dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    _toastPresenter.Show(AlertRequest.Create(message, kind, durationMs));
+                }
+                catch (Exception exception)
+                {
+                    _logger.Error("Emergency stop toast failed.", exception);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop toast schedule failed.", exception);
         }
     }
 
@@ -348,12 +503,32 @@ internal sealed class AppController : IDisposable
 
         try
         {
-            _emergencyStopHotkey.Dispose();
-            _logger.Info("Emergency stop hotkey disposed.");
+            _keyboardEventService.SetHostPriorityHandler(null);
+            _logger.Info("Emergency stop keyboard priority handler cleared.");
         }
         catch (Exception exception)
         {
-            _logger.Error("Emergency stop hotkey dispose failed.", exception);
+            _logger.Error("Emergency stop keyboard priority handler clear failed.", exception);
+        }
+
+        try
+        {
+            _emergencyStopHotkey.Dispose();
+            _logger.Info("Emergency stop RegisterHotKey disposed.");
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Emergency stop RegisterHotKey dispose failed.", exception);
+        }
+
+        try
+        {
+            _mouseInputService.StopActiveRepeat();
+            _keyboardInputService.StopActiveRepeat();
+        }
+        catch (Exception exception)
+        {
+            _logger.Error("Shutdown StopActiveRepeat failed.", exception);
         }
 
         lock (_scriptReloadGate)

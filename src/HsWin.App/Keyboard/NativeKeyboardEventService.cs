@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using HsWin.Core.Hotkeys;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 
@@ -20,7 +21,6 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private const int WmQuit = 0x0012;
     private const uint LlkhfInjected = 0x10;
     private const uint LlkhfUp = 0x80;
-    private const short KeyPressedMask = unchecked((short)0x8000);
     private static readonly TimeSpan HookInstallTimeout = TimeSpan.FromSeconds(5);
 
     private readonly object _gate = new();
@@ -36,6 +36,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private Exception? _hookInstallException;
     private bool _disposed;
     private long _nextSubscriptionId;
+    private Func<KeyboardEventSnapshot, bool>? _hostPriorityHandler;
 
     public NativeKeyboardEventService(IRuntimeLogger logger)
         : this(
@@ -84,9 +85,58 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         }
     }
 
+    /// <summary>
+    /// Installs a host-only handler that runs on the keyboard hook path before any script watchers.
+    /// Used for emergency stop so it cannot be ordered behind config remaps or blocked by script lock.
+    /// Ensures the hook is installed even when no script watchers exist.
+    /// </summary>
+    public void SetHostPriorityHandler(Func<KeyboardEventSnapshot, bool>? handler)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        lock (_gate)
+        {
+            _hostPriorityHandler = handler;
+            if (handler is not null)
+            {
+                EnsureHookInstalled();
+            }
+            else if (_subscriptions.Count == 0)
+            {
+                _modifierTracker.Reset();
+                UninstallHook();
+            }
+        }
+
+        _logger.Info(handler is null
+            ? "Keyboard host priority handler cleared."
+            : "Keyboard host priority handler registered.");
+    }
+
     public bool IsKeyDown(uint virtualKey)
     {
-        return (User32.GetAsyncKeyState((int)virtualKey) & KeyPressedMask) != 0;
+        var modifier = KeyboardKeyRules.ModifierForVirtualKey(virtualKey);
+        if (modifier != HotkeyModifiers.None)
+        {
+            lock (_gate)
+            {
+                // SendInput key-up events intentionally alter GetAsyncKeyState even though the
+                // user still physically holds the modifier. The LL hook tracker ignores injected
+                // events, so it remains the source of truth while our hook is installed.
+                if (_hookHandle != IntPtr.Zero)
+                {
+                    return IsTrackedModifierDown(virtualKey, _modifierTracker.Pressed);
+                }
+            }
+        }
+
+        return NativeKeyStateReader.IsDown(virtualKey);
+    }
+
+    internal static bool IsTrackedModifierDown(uint virtualKey, HotkeyModifiers pressedModifiers)
+    {
+        var modifier = KeyboardKeyRules.ModifierForVirtualKey(virtualKey);
+        return modifier != HotkeyModifiers.None && (pressedModifiers & modifier) != 0;
     }
 
     public void Dispose()
@@ -104,6 +154,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             }
 
             _subscriptions.Clear();
+            _hostPriorityHandler = null;
             _modifierTracker.Reset();
             UninstallHook();
             _disposed = true;
@@ -123,6 +174,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         var isInjected = IsInjectedEvent(hookData);
         KeyboardWatchSubscription[] subscriptions;
         KeyboardEventSnapshot snapshot;
+        Func<KeyboardEventSnapshot, bool>? hostPriorityHandler;
 
         lock (_gate)
         {
@@ -131,13 +183,35 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
                 _modifierTracker.Apply(hookData.VkCode, isKeyUp);
             }
 
-            if (_subscriptions.Count == 0)
+            hostPriorityHandler = _hostPriorityHandler;
+            if (hostPriorityHandler is null && _subscriptions.Count == 0)
             {
                 return User32.CallNextHookEx(_hookHandle, code, wParam, lParam);
             }
 
             snapshot = CreateSnapshot(hookData.VkCode, isKeyUp, isInjected);
-            subscriptions = [.. _subscriptions];
+            subscriptions = _subscriptions.Count == 0 ? [] : [.. _subscriptions];
+        }
+
+        // Host priority (emergency stop) always runs first, never behind script remaps/watchers.
+        if (hostPriorityHandler is not null)
+        {
+            try
+            {
+                if (hostPriorityHandler(snapshot))
+                {
+                    return new IntPtr(1);
+                }
+            }
+            catch (Exception exception)
+            {
+                _logger.Error("Keyboard host priority handler failed.", exception);
+            }
+        }
+
+        if (subscriptions.Length == 0)
+        {
+            return User32.CallNextHookEx(_hookHandle, code, wParam, lParam);
         }
 
         bool shouldSwallow;
@@ -178,7 +252,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             }
 
             _logger.Info($"Keyboard watch disposed id={subscription.Id} count={_subscriptions.Count}.");
-            if (_subscriptions.Count == 0)
+            if (_subscriptions.Count == 0 && _hostPriorityHandler is null)
             {
                 _modifierTracker.Reset();
                 UninstallHook();
@@ -205,6 +279,20 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
 
         if (!ready.Wait(HookInstallTimeout))
         {
+            // Best-effort: stop a late-finishing install thread so we do not leave an orphaned hook.
+            if (_hookThreadId != 0)
+            {
+                _ = User32.PostThreadMessage(_hookThreadId, WmQuit, IntPtr.Zero, IntPtr.Zero);
+            }
+
+            if (_hookHandle != IntPtr.Zero)
+            {
+                _ = User32.UnhookWindowsHookEx(_hookHandle);
+                _hookHandle = IntPtr.Zero;
+            }
+
+            _hookThreadId = 0;
+            _hookThread = null;
             var exception = new TimeoutException($"Timed out after {HookInstallTimeout.TotalMilliseconds:F0}ms while installing WH_KEYBOARD_LL hook.");
             _logger.Error("Low-level keyboard hook installation timed out.", exception);
             throw exception;
@@ -357,9 +445,6 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
 
         [LibraryImport("user32.dll")]
         public static partial IntPtr CallNextHookEx(IntPtr hookHandle, int code, IntPtr wParam, IntPtr lParam);
-
-        [LibraryImport("user32.dll")]
-        public static partial short GetAsyncKeyState(int virtualKey);
 
         [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
         public static partial int GetMessage(out NativeMessage message, IntPtr windowHandle, uint messageFilterMin, uint messageFilterMax);

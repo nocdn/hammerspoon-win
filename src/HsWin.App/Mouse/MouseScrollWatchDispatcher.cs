@@ -41,10 +41,8 @@ internal sealed class MouseScrollWatchDispatcher
             if (subscription.Options.Blocking)
             {
                 // Native swallow only — never invoke JavaScript on the hook thread.
+                // Avoid per-notch Info logging: high-resolution wheels would flood the runtime log.
                 shouldSwallow = true;
-                _logger.Info(
-                    $"Mouse scroll watch will swallow id={subscription.Id} axis='{snapshot.Axis}' " +
-                    $"direction='{snapshot.Direction}' delta={snapshot.Delta} (callback scheduled off-hook).");
             }
 
             ScheduleCallback(subscription, snapshot);

@@ -20,17 +20,29 @@ public sealed class NullKeyboardInputService : IKeyboardInputService
     {
     }
 
-    public IDisposable Repeat(uint virtualKey, KeyboardRepeatOptions options)
+    public IKeyboardRepeatSession Repeat(uint virtualKey, KeyboardRepeatOptions options)
     {
-        return new NullDisposable();
+        return new NullRepeatSession(options.IntervalMs);
     }
 
     public void StopActiveRepeat()
     {
     }
 
-    private sealed class NullDisposable : IDisposable
+    private sealed class NullRepeatSession : IKeyboardRepeatSession
     {
+        public NullRepeatSession(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
+        public int IntervalMs { get; private set; }
+
+        public void SetIntervalMs(int intervalMs)
+        {
+            IntervalMs = intervalMs;
+        }
+
         public void Dispose()
         {
         }

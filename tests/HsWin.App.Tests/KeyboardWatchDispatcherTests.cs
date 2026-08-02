@@ -83,6 +83,23 @@ public sealed class KeyboardWatchDispatcherTests
     }
 
     [Fact]
+    public void SlowBlockingWatcherStillReturnsSwallowResultButLogsWarning()
+    {
+        var logger = new CapturingRuntimeLogger();
+        var dispatcher = new KeyboardWatchDispatcher(logger, new CapturingKeyboardScheduler());
+        var subscription = CreateSubscription(blocking: true, _ =>
+        {
+            Thread.Sleep(20);
+            return true;
+        });
+
+        var shouldSwallow = dispatcher.Dispatch(CreateSnapshot(), [subscription]);
+
+        Assert.True(shouldSwallow);
+        Assert.Contains(logger.Warnings, warning => warning.Contains("slow", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void BlockingWatcherSwallowStopsLaterWatchers()
     {
         var scheduler = new CapturingKeyboardScheduler();

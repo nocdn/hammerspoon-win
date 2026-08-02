@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using HsWin.App.Keyboard;
 
 namespace HsWin.App.Hotkeys;
 
@@ -67,7 +68,7 @@ internal sealed partial class Win32MouseHookPlatform : IMouseHookPlatform
         User32.CallNextHookEx(hookHandle, code, wParam, lParam);
 
     public short GetAsyncKeyState(int virtualKey) =>
-        User32.GetAsyncKeyState(virtualKey);
+        NativeKeyStateReader.GetAsyncState(virtualKey);
 
     public int GetMessage(out NativeMessage message, IntPtr windowHandle, uint messageFilterMin, uint messageFilterMax) =>
         User32.GetMessage(out message, windowHandle, messageFilterMin, messageFilterMax);
@@ -98,9 +99,6 @@ internal sealed partial class Win32MouseHookPlatform : IMouseHookPlatform
 
         [LibraryImport("user32.dll")]
         public static partial IntPtr CallNextHookEx(IntPtr hookHandle, int code, IntPtr wParam, IntPtr lParam);
-
-        [LibraryImport("user32.dll")]
-        public static partial short GetAsyncKeyState(int virtualKey);
 
         [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
         public static partial int GetMessage(out NativeMessage message, IntPtr windowHandle, uint messageFilterMin, uint messageFilterMax);

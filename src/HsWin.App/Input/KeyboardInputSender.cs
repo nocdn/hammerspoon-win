@@ -15,6 +15,17 @@ internal static partial class KeyboardInputSender
     private const uint InputKeyboard = 1;
     private const uint KeyEventKeyUp = 0x0002;
     private const uint KeyEventExtendedKey = 0x0001;
+    private const uint KeyEventScanCode = 0x0008;
+    private const uint MapVkToVsc = 0;
+    private const uint MapVkToVscEx = 4;
+
+    // Hardware scancodes for left/right modifiers (MapVirtualKey can be unreliable for distinct L/R VKs).
+    private const ushort ScanLeftShift = 0x2A;
+    private const ushort ScanRightShift = 0x36;
+    private const ushort ScanLeftControl = 0x1D;
+    private const ushort ScanRightControl = 0x1D;
+    private const ushort ScanLeftAlt = 0x38;
+    private const ushort ScanRightAlt = 0x38;
 
     internal static int NativeInputSize => Marshal.SizeOf<Input>();
 
@@ -142,8 +153,14 @@ internal static partial class KeyboardInputSender
 
     private static Input CreateKeyboardInput(uint virtualKey, bool keyUp)
     {
-        var flags = keyUp ? KeyEventKeyUp : 0u;
-        if (KeyboardKeyRules.IsExtendedVirtualKey(virtualKey))
+        var scanCode = ResolveScanCode(virtualKey);
+        var isExtended = KeyboardKeyRules.IsExtendedVirtualKey(virtualKey)
+            || virtualKey is KeyboardKeyRules.VkRightControl or KeyboardKeyRules.VkRightMenu;
+
+        // Use scan-code injection (wVk = 0). Games/GLFW often ignore pure virtual-key SendInput,
+        // and combining KEYEVENTF_SCANCODE with a non-zero wVk is undefined on some paths.
+        var flags = KeyEventScanCode | (keyUp ? KeyEventKeyUp : 0u);
+        if (isExtended)
         {
             flags |= KeyEventExtendedKey;
         }
@@ -153,11 +170,38 @@ internal static partial class KeyboardInputSender
             Type = InputKeyboard,
             Keyboard = new KeyboardInput
             {
-                VirtualKey = (ushort)virtualKey,
+                VirtualKey = 0,
+                ScanCode = scanCode,
                 Flags = flags,
                 ExtraInfo = new UIntPtr(InjectedExtraInfo)
             }
         };
+    }
+
+    private static ushort ResolveScanCode(uint virtualKey)
+    {
+        return virtualKey switch
+        {
+            KeyboardKeyRules.VkLeftShift or KeyboardKeyRules.VkShift => ScanLeftShift,
+            KeyboardKeyRules.VkRightShift => ScanRightShift,
+            KeyboardKeyRules.VkLeftControl or KeyboardKeyRules.VkControl => ScanLeftControl,
+            KeyboardKeyRules.VkRightControl => ScanRightControl,
+            KeyboardKeyRules.VkLeftMenu or KeyboardKeyRules.VkMenu => ScanLeftAlt,
+            KeyboardKeyRules.VkRightMenu => ScanRightAlt,
+            _ => ResolveScanCodeViaMapVirtualKey(virtualKey)
+        };
+    }
+
+    private static ushort ResolveScanCodeViaMapVirtualKey(uint virtualKey)
+    {
+        var mapped = User32.MapVirtualKey(virtualKey, MapVkToVscEx);
+        if (mapped == 0)
+        {
+            mapped = User32.MapVirtualKey(virtualKey, MapVkToVsc);
+        }
+
+        // MAPVK_VK_TO_VSC_EX may return 0xE0xx for extended keys; keep the low byte for wScan.
+        return (ushort)(mapped & 0xFF);
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 40)]
@@ -188,5 +232,9 @@ internal static partial class KeyboardInputSender
     {
         [LibraryImport("user32.dll", SetLastError = true)]
         public static unsafe partial uint SendInput(uint inputCount, Input* inputs, int inputSize);
+
+        // Windows exports MapVirtualKeyA/W, not an undecorated MapVirtualKey entry point.
+        [LibraryImport("user32.dll", EntryPoint = "MapVirtualKeyW")]
+        public static partial uint MapVirtualKey(uint code, uint mapType);
     }
 }

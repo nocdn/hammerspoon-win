@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using HsWin.App.Hotkeys;
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 
 namespace HsWin.App.Tests;
@@ -130,6 +131,52 @@ public sealed class NativeMouseHotkeyHookTests
         Assert.Equal(1, released);
     }
 
+    [Fact]
+    public void ModifierMatchingUsesPhysicalKeyboardEventService()
+    {
+        var platform = new FakeMouseHookPlatform();
+        var keyboardEvents = new StubKeyboardEventService(KeyboardKeyRules.VkControl);
+        using var hook = new NativeMouseHotkeyHook(
+            NullRuntimeLogger.Instance,
+            platform,
+            callbackContext: null,
+            keyboardEvents: keyboardEvents);
+        var pressed = 0;
+
+        using var registration = hook.Register(
+            HotkeyDefinition.CreateMouseButton(HotkeyModifiers.Control, HotkeyMouseButton.XButton1),
+            () => pressed++);
+
+        Assert.True(platform.InstallCompleted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new IntPtr(1), platform.InvokeHook(0x020B, 0x0001u << 16));
+        Assert.Equal(1, pressed);
+    }
+
+    [Fact]
+    public void DisposeWhileHeldDoesNotFireStaleReleaseOnLaterButtonUp()
+    {
+        var platform = new FakeMouseHookPlatform();
+        using var hook = new NativeMouseHotkeyHook(NullRuntimeLogger.Instance, platform, callbackContext: null);
+        var pressed = 0;
+        var released = 0;
+
+        var registration = hook.RegisterHeld(
+            HotkeyDefinition.CreateMouseButton(HotkeyModifiers.None, HotkeyMouseButton.XButton1),
+            () => pressed++,
+            () => released++,
+            blocking: true);
+
+        Assert.True(platform.InstallCompleted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new IntPtr(1), platform.InvokeHook(0x020B, 0x0001u << 16));
+        Assert.Equal(1, pressed);
+
+        registration.Dispose();
+
+        // Button-up after dispose must not invoke the disposed held release callback.
+        Assert.Equal(IntPtr.Zero, platform.InvokeHook(0x020C, 0x0001u << 16));
+        Assert.Equal(0, released);
+    }
+
     private sealed class FakeMouseHookPlatform : IMouseHookPlatform
     {
         private readonly ManualResetEventSlim _quitSignal = new(false);
@@ -232,6 +279,27 @@ public sealed class NativeMouseHotkeyHookTests
             public uint Time;
 
             public UIntPtr ExtraInfo;
+        }
+    }
+
+    private sealed class StubKeyboardEventService(params uint[] downKeys) : IKeyboardEventService
+    {
+        private readonly HashSet<uint> _downKeys = [.. downKeys];
+
+        public IDisposable Watch(
+            KeyboardEventWatchOptions options,
+            Func<KeyboardEventSnapshot, bool> callback) =>
+            NullDisposable.Instance;
+
+        public bool IsKeyDown(uint virtualKey) => _downKeys.Contains(virtualKey);
+    }
+
+    private sealed class NullDisposable : IDisposable
+    {
+        public static NullDisposable Instance { get; } = new();
+
+        public void Dispose()
+        {
         }
     }
 

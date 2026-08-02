@@ -30,6 +30,7 @@ public sealed class ConfigLinter
 
         var diagnostics = new List<ConfigLintDiagnostic>();
         diagnostics.AddRange(ConfigTimerLiteralAnalyzer.Analyze(source));
+        diagnostics.AddRange(ConfigKeyboardRepeatLiteralAnalyzer.Analyze(source));
 
         try
         {
@@ -38,7 +39,7 @@ public sealed class ConfigLinter
         }
         catch (Exception exception)
         {
-            if (!IsDuplicateTimerLiteralDiagnostic(exception, diagnostics))
+            if (!IsDuplicateStaticDiagnostic(exception, diagnostics))
             {
                 diagnostics.Add(new ConfigLintDiagnostic(
                     ConfigLintSeverity.Error,
@@ -99,11 +100,16 @@ public sealed class ConfigLinter
         return value;
     }
 
-    private static bool IsDuplicateTimerLiteralDiagnostic(
+    private static bool IsDuplicateStaticDiagnostic(
         Exception exception,
         IReadOnlyCollection<ConfigLintDiagnostic> diagnostics)
     {
+        var message = FormatException(exception);
         return diagnostics.Any(static diagnostic => diagnostic.Code == "HSWIN001")
-            && FormatException(exception).Contains("Timer interval must be at least 1 millisecond", StringComparison.Ordinal);
+                && message.Contains("Timer interval must be at least 1 millisecond", StringComparison.Ordinal)
+            || diagnostics.Any(static diagnostic => diagnostic.Code == "HSWIN002")
+                && message.Contains("repeatPulse", StringComparison.Ordinal)
+            || diagnostics.Any(static diagnostic => diagnostic.Code == "HSWIN003")
+                && message.Contains("keyDownMs", StringComparison.Ordinal);
     }
 }

@@ -44,7 +44,7 @@ internal sealed class TrayIconService : IDisposable
         _startAtLoginItem.Click += (_, _) => ToggleStartAtLogin();
         contextMenu.Items.Add(_startAtLoginItem);
 
-        _installCliItem = new ToolStripMenuItem("Install hspn CLI");
+        _installCliItem = new ToolStripMenuItem("Install CLI");
         _installCliItem.Click += (_, _) => InstallCli();
         contextMenu.Items.Add(_installCliItem);
 

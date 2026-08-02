@@ -51,6 +51,8 @@ public static class KeyboardScriptOptionsParser
             "modifiers",
             "withModifiers",
             "holdModifiers");
+        var inputMethod = KeyboardInputMethodParser.Parse(
+            ScriptArgumentReader.GetPropertyValue(value, "inputMethod", "method"));
 
         return new KeyboardTapOptions(
             ScriptArgumentReader.IsMissing(suppressValue)
@@ -58,7 +60,8 @@ public static class KeyboardScriptOptionsParser
                 : HotkeyParser.ParseModifiers(suppressValue),
             ScriptArgumentReader.IsMissing(modifiersValue)
                 ? KeyboardTapOptions.Default.Modifiers
-                : HotkeyParser.ParseModifiers(modifiersValue));
+                : HotkeyParser.ParseModifiers(modifiersValue),
+            inputMethod);
     }
 
     public static KeyboardRepeatOptions ParseRepeatOptions(object? value)
@@ -69,12 +72,24 @@ public static class KeyboardScriptOptionsParser
         }
 
         var intervalValue = ScriptArgumentReader.GetPropertyValue(value, "intervalMs", "interval");
+        var keyDownValue = ScriptArgumentReader.GetPropertyValue(
+            value,
+            "keyDownMs",
+            "holdMs",
+            "pressDurationMs");
         var tapOptions = ParseTapOptions(value);
         var intervalMs = ScriptArgumentReader.IsMissing(intervalValue)
             ? KeyboardRepeatOptions.Default.IntervalMs
             : ConvertToRepeatInterval(intervalValue!);
+        var keyDownMs = ScriptArgumentReader.IsMissing(keyDownValue)
+            ? KeyboardRepeatOptions.Default.KeyDownMs
+            : ConvertToKeyDownDuration(keyDownValue!, intervalMs);
 
-        return new KeyboardRepeatOptions(intervalMs, tapOptions.SuppressPhysicalModifiers);
+        return new KeyboardRepeatOptions(
+            intervalMs,
+            tapOptions.SuppressPhysicalModifiers,
+            tapOptions.InputMethod,
+            keyDownMs);
     }
 
     private static int ConvertToRepeatInterval(object value)
@@ -98,6 +113,30 @@ public static class KeyboardScriptOptionsParser
         catch (InvalidCastException exception)
         {
             throw new ArgumentException("intervalMs must be a number of milliseconds.", nameof(value), exception);
+        }
+    }
+
+    private static int ConvertToKeyDownDuration(object value, int intervalMs)
+    {
+        try
+        {
+            var keyDownMs = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            if (keyDownMs < 0 || keyDownMs >= intervalMs)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    $"Keyboard repeat keyDownMs must be at least 0 and less than intervalMs ({intervalMs}).");
+            }
+
+            return keyDownMs;
+        }
+        catch (FormatException exception)
+        {
+            throw new ArgumentException("keyDownMs must be a number of milliseconds.", nameof(value), exception);
+        }
+        catch (InvalidCastException exception)
+        {
+            throw new ArgumentException("keyDownMs must be a number of milliseconds.", nameof(value), exception);
         }
     }
 

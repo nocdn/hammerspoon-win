@@ -41,12 +41,20 @@ public sealed class KeyboardScriptApi
             keyboardEvent =>
             {
                 var eventJson = ScriptJson.Serialize(keyboardEvent);
-                var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
-                var requestedSwallow = Convert.ToBoolean(result, CultureInfo.InvariantCulture);
+                // Blocking watchers run on WH_KEYBOARD_LL — fail-open if the script gate is busy
+                // so a wedged UI callback cannot freeze the physical keyboard.
                 if (parsedOptions.Blocking)
                 {
-                    return requestedSwallow;
+                    if (!_callbacks.TryInvokeScriptCallbackFailOpen(scriptFunction, out var blockingResult, eventJson))
+                    {
+                        return false; // pass key through
+                    }
+
+                    return Convert.ToBoolean(blockingResult, CultureInfo.InvariantCulture);
                 }
+
+                var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
+                var requestedSwallow = Convert.ToBoolean(result, CultureInfo.InvariantCulture);
 
                 if (requestedSwallow)
                 {
@@ -116,15 +124,66 @@ public sealed class KeyboardScriptApi
         _keyboardInput.Tap(virtualKey, parsedOptions);
     }
 
-    public ScriptResourceHandle Repeat(object? key, object? options = null)
+    public KeyboardRepeatScriptHandle Repeat(object? key, object? options = null)
+    {
+        return StartRepeat(key, options, pulse: false);
+    }
+
+    public KeyboardRepeatScriptHandle RepeatPulse(object? key, object? options = null)
+    {
+        return StartRepeat(key, options, pulse: true);
+    }
+
+    private KeyboardRepeatScriptHandle StartRepeat(object? key, object? options, bool pulse)
     {
         var virtualKey = HotkeyParser.ParseVirtualKey(key);
         var parsedOptions = KeyboardScriptOptionsParser.ParseRepeatOptions(options);
-        var handle = new ScriptResourceHandle(_keyboardInput.Repeat(virtualKey, parsedOptions));
+        var displayName = KeyboardKeyRules.GetDisplayName(virtualKey);
+        if (pulse)
+        {
+            if (parsedOptions.KeyDownMs <= 0)
+            {
+                throw new ArgumentException(
+                    "hs.keyboard.repeatPulse() requires keyDownMs (or holdMs/pressDurationMs) greater than 0.",
+                    nameof(options));
+            }
+        }
+        else
+        {
+            if (parsedOptions.KeyDownMs > 0)
+            {
+                throw new ArgumentException(
+                    "Use hs.keyboard.repeatPulse() for repeats with a held key-down phase.",
+                    nameof(options));
+            }
+
+            if (KeyboardKeyRules.IsModifierVirtualKey(virtualKey))
+            {
+                _logger.Warning(
+                    $"Rejected instantaneous modifier repeat key='{displayName}' vk=0x{virtualKey:X2}; " +
+                    "use hs.keyboard.repeatPulse() with keyDownMs > 0.");
+                throw new ArgumentException(
+                    "Modifier repeats require hs.keyboard.repeatPulse() with keyDownMs greater than 0.",
+                    nameof(key));
+            }
+        }
+
+        var handle = new KeyboardRepeatScriptHandle(_keyboardInput.Repeat(virtualKey, parsedOptions));
         _trackResource(handle);
+        var methodName = pulse ? "repeatPulse" : "repeat";
         _logger.Info(
-            $"Script hs.keyboard.repeat('{KeyboardKeyRules.GetDisplayName(virtualKey)}') intervalMs={parsedOptions.IntervalMs} suppressModifiers=0x{(uint)parsedOptions.SuppressPhysicalModifiers:X}.");
+            $"Script hs.keyboard.{methodName}('{displayName}') " +
+            $"intervalMs={parsedOptions.IntervalMs} " +
+            $"keyDownMs={parsedOptions.KeyDownMs} " +
+            $"suppressModifiers=0x{(uint)parsedOptions.SuppressPhysicalModifiers:X} " +
+            $"inputMethod={KeyboardInputMethodParser.GetDisplayName(parsedOptions.InputMethod)}.");
         return handle;
+    }
+
+    public void StopRepeat()
+    {
+        _keyboardInput.StopActiveRepeat();
+        _logger.Info("Script hs.keyboard.stopRepeat() requested.");
     }
 
     public void KeyDown(object? key)

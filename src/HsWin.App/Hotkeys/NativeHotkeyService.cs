@@ -1,4 +1,5 @@
 using HsWin.Core.Hotkeys;
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -32,6 +33,19 @@ internal sealed partial class NativeHotkeyService : IHotkeyRegistrar, IDisposabl
 
     public NativeHotkeyService(IRuntimeLogger logger)
         : this(logger, new DispatcherHotkeyThreadInvoker(Dispatcher.CurrentDispatcher), NativeHotkeyPlatform.Instance)
+    {
+    }
+
+    public NativeHotkeyService(IRuntimeLogger logger, IKeyboardEventService keyboardEvents)
+        : this(
+            logger,
+            new DispatcherHotkeyThreadInvoker(Dispatcher.CurrentDispatcher),
+            NativeHotkeyPlatform.Instance,
+            new NativeMouseHotkeyHook(
+                logger,
+                Win32MouseHookPlatform.Instance,
+                SynchronizationContext.Current,
+                keyboardEvents: keyboardEvents))
     {
     }
 
