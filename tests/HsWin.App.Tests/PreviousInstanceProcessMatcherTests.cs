@@ -96,4 +96,32 @@ public sealed class PreviousInstanceProcessMatcherTests
 
         Assert.True(result);
     }
+
+    [Fact]
+    public void CandidateProcessNamesIncludeKnownNamesWithoutDuplicates()
+    {
+        var names = PreviousInstanceProcessMatcher.CandidateProcessNames(
+            @"C:\Program Files\Hammerspoon (Windows Edition)\Hammerspoon (Windows Edition).exe");
+
+        Assert.Equal(2, names.Count);
+        Assert.Contains(AppBranding.DisplayName, names);
+        Assert.Contains("HsWin.App", names);
+    }
+
+    [Fact]
+    public void CandidateProcessNamesAddCurrentExecutableBaseNameWhenDistinct()
+    {
+        var names = PreviousInstanceProcessMatcher.CandidateProcessNames(@"C:\devin\CustomBuild.exe");
+
+        Assert.Equal(3, names.Count);
+        Assert.Contains("CustomBuild", names);
+    }
+
+    [Fact]
+    public void CandidateProcessNamesHandleMissingExecutablePath()
+    {
+        var names = PreviousInstanceProcessMatcher.CandidateProcessNames(null);
+
+        Assert.Equal(2, names.Count);
+    }
 }

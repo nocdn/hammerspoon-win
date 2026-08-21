@@ -27,20 +27,28 @@ public sealed class ProcessApplicationProvider : IApplicationProvider
         return isRunning;
     }
 
-    public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
+    public IReadOnlyList<ApplicationSnapshot> GetRunningApplications(bool includeDetails)
     {
         using var processes = new ProcessCollection(Process.GetProcesses());
         var snapshots = processes
-            .Select(CreateSnapshot)
+            .Select(process => CreateSnapshot(process, includeDetails))
             .OrderBy(snapshot => snapshot.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(snapshot => snapshot.Pid)
             .ToArray();
-        _logger.Info($"Application runningApplications query returned {snapshots.Length} processes.");
+        _logger.Info($"Application runningApplications query returned {snapshots.Length} processes includeDetails={includeDetails}.");
         return snapshots;
     }
 
-    private static ApplicationSnapshot CreateSnapshot(Process process)
+    private static ApplicationSnapshot CreateSnapshot(Process process, bool includeDetails)
     {
+        // MainModule enumerates each process's loaded modules and throws for elevated
+        // processes; reading it (and the window title) for every process on the machine is
+        // expensive, so detail fields exist only when the caller asked for them.
+        if (!includeDetails)
+        {
+            return new ApplicationSnapshot(process.Id, process.ProcessName, MainWindowTitle: null, Path: null);
+        }
+
         return new ApplicationSnapshot(
             process.Id,
             process.ProcessName,

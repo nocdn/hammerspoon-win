@@ -42,8 +42,14 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
     private readonly SynchronizationContext? _callbackContext;
     private readonly MouseScrollWatchDispatcher _scrollDispatcher;
     private readonly Dictionary<int, RegistrationState> _registrations = [];
+    private readonly Dictionary<(HotkeyMouseButton Button, HotkeyModifiers Modifiers), RegistrationState> _registrationsByHotkey = [];
     private readonly Dictionary<HotkeyMouseButton, RegistrationState> _activeRegistrations = [];
     private readonly List<MouseScrollWatchSubscription> _scrollSubscriptions = [];
+
+    // Immutable snapshot of _scrollSubscriptions, rebuilt under _gate on every mutation and read
+    // without allocation on the hook thread (wheel events can fire thousands of times per second).
+    private MouseScrollWatchSubscription[] _scrollSubscriptionSnapshot = [];
+
     private readonly MouseHookProcedure _hookProcedure;
     private IntPtr _hookHandle;
     private Thread? _hookThread;
@@ -110,6 +116,8 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
                 _scrollSubscriptions.Add(subscription);
             }
 
+            RebuildScrollSubscriptionSnapshot();
+
             _logger.Info(
                 $"Mouse scroll watch registered id={subscription.Id} includeInjected={options.IncludeInjected} " +
                 $"blocking={options.Blocking} prepend={options.Prepend} axes={FormatAxes(options.Axes)} " +
@@ -139,7 +147,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (HasDuplicateRegistration(hotkey))
+            if (_registrationsByHotkey.ContainsKey((hotkey.MouseButton!.Value, hotkey.Modifiers)))
             {
                 throw new InvalidOperationException($"Mouse hotkey {hotkey} is already registered.");
             }
@@ -147,7 +155,9 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
             EnsureHookInstalled();
 
             var id = _nextId++;
-            _registrations[id] = new RegistrationState(id, hotkey, pressed, released, blocking);
+            var registration = new RegistrationState(id, hotkey, pressed, released, blocking);
+            _registrations[id] = registration;
+            _registrationsByHotkey[(hotkey.MouseButton.Value, hotkey.Modifiers)] = registration;
             _logger.Info(
                 $"Mouse hotkey registered id={id} modifiers=0x{(uint)hotkey.Modifiers:X} button={hotkey.MouseButton} " +
                 $"held={released is not null} blocking={blocking}.");
@@ -170,7 +180,9 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
             }
 
             _scrollSubscriptions.Clear();
+            RebuildScrollSubscriptionSnapshot();
             _registrations.Clear();
+            _registrationsByHotkey.Clear();
             _activeRegistrations.Clear(); // explicit: no stale button-up after dispose
             UninstallHook();
             _disposed = true;
@@ -315,7 +327,7 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
                 return _platform.CallNextHookEx(_hookHandle, code, wParam, lParam);
             }
 
-            subscriptions = [.. _scrollSubscriptions];
+            subscriptions = _scrollSubscriptionSnapshot;
         }
 
         var shouldSwallow = _scrollDispatcher.Dispatch(snapshot, subscriptions);
@@ -349,15 +361,14 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         RegistrationState? match;
         lock (_gate)
         {
-            match = _registrations.Values.FirstOrDefault(registration =>
-                registration.Hotkey.MouseButton == mouseButtonEvent.Button
-                && registration.Hotkey.Modifiers == pressedModifiers);
-
-            if (match is null)
+            // Registrations are unique per (button, modifiers), so a keyed lookup replaces the
+            // former O(n) scan with its closure on the hook thread.
+            if (!_registrationsByHotkey.TryGetValue((mouseButtonEvent.Button, pressedModifiers), out var registration))
             {
                 return false;
             }
 
+            match = registration;
             _activeRegistrations[mouseButtonEvent.Button] = match;
         }
 
@@ -384,13 +395,6 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
         }
 
         callback();
-    }
-
-    private bool HasDuplicateRegistration(HotkeyDefinition hotkey)
-    {
-        return _registrations.Values.Any(registration =>
-            registration.Hotkey.Modifiers == hotkey.Modifiers
-            && registration.Hotkey.MouseButton == hotkey.MouseButton);
     }
 
     private void EnsureHookInstalled()
@@ -478,6 +482,11 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
                 return;
             }
 
+            if (removed.Hotkey.MouseButton is { } removedButton)
+            {
+                _registrationsByHotkey.Remove((removedButton, removed.Hotkey.Modifiers));
+            }
+
             // Drop held-state for this registration so a later button-up cannot fire a stale release
             // callback or keep swallowing after dispose/reload/emergency stop.
             if (removed.Hotkey.MouseButton is { } button
@@ -501,9 +510,15 @@ internal sealed class NativeMouseHotkeyHook : IDisposable
                 return;
             }
 
+            RebuildScrollSubscriptionSnapshot();
             _logger.Info($"Mouse scroll watch disposed id={subscription.Id} count={_scrollSubscriptions.Count}.");
             MaybeUninstallHookUnlocked();
         }
+    }
+
+    private void RebuildScrollSubscriptionSnapshot()
+    {
+        _scrollSubscriptionSnapshot = [.. _scrollSubscriptions];
     }
 
     private void MaybeUninstallHookUnlocked()

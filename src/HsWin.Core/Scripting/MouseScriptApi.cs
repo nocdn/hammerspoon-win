@@ -86,8 +86,21 @@ public sealed class MouseScriptApi
             parsedOptions,
             scrollEvent =>
             {
-                var eventJson = ScriptJson.Serialize(scrollEvent);
-                var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
+                // Primitive fields marshal into V8 far cheaper than a serialized JSON string
+                // (bootstrap.js rebuilds the frozen event object from them). Field order must
+                // match the bootstrap adapter's parameter list.
+                var result = _callbacks.InvokeScriptCallback(
+                    scriptFunction,
+                    scrollEvent.Axis,
+                    scrollEvent.Direction,
+                    scrollEvent.Delta,
+                    scrollEvent.Notches,
+                    scrollEvent.IsVertical,
+                    scrollEvent.IsHorizontal,
+                    scrollEvent.IsInjected,
+                    scrollEvent.ModifierFlags,
+                    scrollEvent.X,
+                    scrollEvent.Y);
                 // Return value is only meaningful for usage warnings on non-preventDefault watchers.
                 // preventDefault swallow is decided natively on the hook path without JS.
                 return Convert.ToBoolean(result, CultureInfo.InvariantCulture);

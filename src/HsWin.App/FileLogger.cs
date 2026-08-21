@@ -11,6 +11,8 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
     private readonly BlockingCollection<LogEntry> _entries = [];
     private readonly object _fallbackGate = new();
     private readonly Thread _worker;
+    private StreamWriter? _writer;
+    private int _firstUnwrittenIndex;
     private int _disposed;
 
     private FileLogger(string logFilePath)
@@ -85,6 +87,22 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
         }
         finally
         {
+            // Bounded: if the worker is stuck mid-write on the gate, a blocking lock here
+            // would hang shutdown past the Join timeout above.
+            if (Monitor.TryEnter(_fallbackGate, TimeSpan.FromSeconds(2)))
+            {
+                try
+                {
+                    _writer?.Flush();
+                    _writer?.Dispose();
+                    _writer = null;
+                }
+                finally
+                {
+                    Monitor.Exit(_fallbackGate);
+                }
+            }
+
             _entries.Dispose();
         }
     }
@@ -122,25 +140,70 @@ internal sealed class FileLogger : IRuntimeLogger, IDisposable
 
     private void WriteBatch(LogEntry firstEntry)
     {
+        var entries = new List<LogEntry> { firstEntry };
+        while (_entries.TryTake(out var nextEntry))
+        {
+            entries.Add(nextEntry);
+        }
+
         lock (_fallbackGate)
         {
-            using var stream = new FileStream(
-                _logFilePath,
-                FileMode.Append,
-                FileAccess.Write,
-                FileShare.ReadWrite,
-                bufferSize: 16 * 1024,
-                FileOptions.SequentialScan);
-            using var writer = new StreamWriter(stream);
-
-            WriteEntry(writer, firstEntry);
-            while (_entries.TryTake(out var nextEntry))
+            // After Dispose, never resurrect the long-lived writer; drain via the fallback.
+            if (Volatile.Read(ref _disposed) != 0)
             {
-                WriteEntry(writer, nextEntry);
+                foreach (var entry in entries)
+                {
+                    WriteFallback(entry);
+                }
+
+                return;
             }
 
-            writer.Flush();
+            try
+            {
+                // One long-lived writer instead of open/flush/close per batch: under sparse
+                // logging that was one file-open cycle per line. The writer is flushed when
+                // the queue drains so entries reach disk without Dispose.
+                _writer ??= CreateWriter();
+                for (var index = 0; index < entries.Count; index++)
+                {
+                    WriteEntry(_writer, entries[index]);
+
+                    // Entries before this point may already be in the writer buffer; only
+                    // this and later entries go through the fallback if a write fails, so
+                    // lines are never duplicated.
+                    _firstUnwrittenIndex = index + 1;
+                }
+
+                _writer.Flush();
+                _firstUnwrittenIndex = 0;
+            }
+            catch
+            {
+                // Drop the long-lived writer; entries not yet handed to it go through the
+                // open/close fallback so nothing is lost, and the next batch recreates it.
+                _writer?.Dispose();
+                _writer = null;
+                for (var index = _firstUnwrittenIndex; index < entries.Count; index++)
+                {
+                    WriteFallback(entries[index]);
+                }
+
+                _firstUnwrittenIndex = 0;
+            }
         }
+    }
+
+    private StreamWriter CreateWriter()
+    {
+        var stream = new FileStream(
+            _logFilePath,
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            bufferSize: 16 * 1024,
+            FileOptions.SequentialScan);
+        return new StreamWriter(stream);
     }
 
     private void WriteFallback(LogEntry entry)

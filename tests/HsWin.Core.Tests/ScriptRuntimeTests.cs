@@ -402,6 +402,8 @@ public sealed class ScriptRuntimeTests
 
         runtime.Reload("""console.log("value", { count: 3 });""");
 
+        // Console writes are queued; dispose flushes before the file is asserted on.
+        console.Dispose();
         var contents = File.ReadAllText(console.CurrentLogFilePath!);
         Assert.Contains("[log] value {\"count\":3}", contents, StringComparison.Ordinal);
     }
@@ -424,6 +426,7 @@ public sealed class ScriptRuntimeTests
 
         Assert.NotEqual(firstPath, secondPath);
         Assert.Equal("05-19-2026-13-47-2.log", Path.GetFileName(secondPath));
+        console.Dispose();
     }
 
     [Fact]
@@ -1617,8 +1620,9 @@ public sealed class ScriptRuntimeTests
         Assert.True(swallowedUp);
         var tap = Assert.Single(keyboardInput.Taps);
         Assert.Equal(0x23u, tap.VirtualKey);
+        // The registration log states the mapping; per-keystroke remap logging was removed
+        // from the WH_KEYBOARD_LL path deliberately.
         Assert.Contains(logger.Infos, info => info.Contains("hs.keyboard.remap('pageup', 'end')", StringComparison.Ordinal));
-        Assert.Contains(logger.Infos, info => info.Contains("Keyboard remap matched source='pageup'", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1916,6 +1920,295 @@ public sealed class ScriptRuntimeTests
         Assert.Equal("timer", request.Text);
     }
 
+    [Fact]
+    public void KeyboardWatchEventMatchesJsonShapeWithNativeModifierArray()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""
+            hs.keyboard.watch(event => {
+              const shape = [
+                event.type,
+                event.keyCode,
+                event.key,
+                event.modifiers.join("+"),
+                event.modifierFlags,
+                event.isKeyDown,
+                event.isKeyUp,
+                event.isModifier,
+                event.isInjected,
+                event.isExtended,
+                Array.isArray(event.modifiers)
+              ].join(":");
+              hs.alert.show(shape, "normal", 1);
+              return false;
+            }, { blocking: true });
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.False(watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x42,
+            "b",
+            ["ctrl", "shift"],
+            (uint)(HotkeyModifiers.Control | HotkeyModifiers.Shift),
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false)));
+
+        // Field order, modifier order (ctrl before shift), flag values, and the native-array
+        // modifier list must match the object JSON.parse used to produce.
+        Assert.Equal(
+            "keydown:66:b:ctrl+shift:6:true:false:false:false:false:true",
+            Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
+    public void MouseScrollWatchEventMatchesJsonShape()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var mouseEvents = new CapturingMouseEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            MouseEvents = mouseEvents
+        });
+
+        runtime.Reload("""
+            hs.mouse.watchScroll(event => {
+              const shape = [
+                event.type,
+                event.axis,
+                event.direction,
+                event.delta,
+                event.notches,
+                event.isVertical,
+                event.isHorizontal,
+                event.isInjected,
+                event.modifiers.join("+"),
+                event.modifierFlags,
+                event.x,
+                event.y,
+                Array.isArray(event.modifiers)
+              ].join(":");
+              hs.alert.show(shape, "normal", 1);
+            }, { preventDefault: true });
+            """);
+
+        var watch = Assert.Single(mouseEvents.Watches);
+        watch.Callback(new MouseScrollEventSnapshot(
+            MouseScrollEventSnapshot.ScrollType,
+            MouseScrollEventSnapshot.VerticalAxis,
+            MouseScrollEventSnapshot.DirectionDown,
+            Delta: -240,
+            Notches: -2,
+            IsVertical: true,
+            IsHorizontal: false,
+            IsInjected: false,
+            Modifiers: ["alt"],
+            ModifierFlags: (uint)HotkeyModifiers.Alt,
+            X: 11,
+            Y: 22));
+
+        Assert.Equal(
+            "scroll:vertical:down:-240:-2:true:false:false:alt:1:11:22:true",
+            Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
+    public void KeyboardHeldHotkeyRegistersKeyFilterCoveringReleasePaths()
+    {
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""hs.hotkey.bindHeld(["shift"], "F13", () => {}, () => {});""");
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.NotNull(watch.Options.KeyFilter);
+        var filter = watch.Options.KeyFilter!;
+        Assert.Contains(0x7Cu, filter); // F13 definition key
+
+        // The release path can act on any modifier key-up, so the filter must cover every
+        // VK that KeyboardKeyRules classifies as a modifier — not just the bound ones.
+        for (var virtualKey = 0u; virtualKey < 256; virtualKey++)
+        {
+            if (KeyboardKeyRules.IsModifierVirtualKey(virtualKey))
+            {
+                Assert.Contains(virtualKey, filter);
+            }
+        }
+    }
+
+    [Fact]
+    public void KeyboardHeldHotkeyEventMatchesJsonShape()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var keyboardEvents = new CapturingKeyboardEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            KeyboardEvents = keyboardEvents
+        });
+
+        runtime.Reload("""
+            hs.hotkey.bindHeld(["shift"], "F13", event => {
+              const shape = [
+                event.type,
+                event.keyCode,
+                event.key,
+                event.modifiers.join("+"),
+                event.modifierFlags,
+                event.isKeyDown,
+                event.isKeyUp,
+                event.isModifier,
+                event.isInjected,
+                event.isExtended
+              ].join(":");
+              hs.alert.show(shape, "normal", 1);
+            }, () => {});
+            """);
+
+        var watch = Assert.Single(keyboardEvents.Watches);
+        Assert.True(watch.Callback(new KeyboardEventSnapshot(
+            "keydown",
+            0x7C,
+            "f13",
+            ["shift"],
+            (uint)HotkeyModifiers.Shift,
+            IsKeyDown: true,
+            IsKeyUp: false,
+            IsModifier: false,
+            IsInjected: false,
+            IsExtended: false)));
+
+        Assert.Equal(
+            "keydown:124:f13:shift:4:true:false:false:false:false",
+            Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
+    public void MouseScrollWatchHorizontalEventMatchesJsonShape()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var mouseEvents = new CapturingMouseEventService();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            MouseEvents = mouseEvents
+        });
+
+        runtime.Reload("""
+            hs.mouse.watchScroll(event => {
+              hs.alert.show(`${event.axis}:${event.direction}:${event.isVertical}:${event.isHorizontal}`, "normal", 1);
+            });
+            """);
+
+        var watch = Assert.Single(mouseEvents.Watches);
+        watch.Callback(new MouseScrollEventSnapshot(
+            MouseScrollEventSnapshot.ScrollType,
+            MouseScrollEventSnapshot.HorizontalAxis,
+            MouseScrollEventSnapshot.DirectionLeft,
+            Delta: -120,
+            Notches: -1,
+            IsVertical: false,
+            IsHorizontal: true,
+            IsInjected: false,
+            Modifiers: [],
+            ModifierFlags: 0,
+            X: 0,
+            Y: 0));
+
+        Assert.Equal("horizontal:left:false:true", Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
+    public void RunningApplicationsAcceptsDetailsAlias()
+    {
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "chrome", "Chrome", @"C:\chrome.exe"));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Applications = applications
+        });
+
+        runtime.Reload("""hs.application.runningApplications({ details: false });""");
+
+        Assert.False(applications.LastIncludeDetails);
+    }
+
+    [Fact]
+    public void MouseHeldHotkeyEventMatchesJsonShape()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var hotkeys = new CapturingHotkeyRegistrar();
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Hotkeys = hotkeys
+        });
+
+        runtime.Reload("""
+            hs.hotkey.bindHeld([], "mouse.forward", event => {
+              hs.alert.show(`${event.type}:${event.button}:${event.isDown}:${event.isUp}`, "normal", 1);
+            }, event => {
+              hs.alert.show(`${event.type}:${event.button}:${event.isDown}:${event.isUp}`, "normal", 1);
+            });
+            """);
+
+        var registration = Assert.Single(hotkeys.HeldRegistrations);
+        registration.TriggerPressed();
+
+        Assert.Equal("mousedown:forward:true:false", Assert.Single(presenter.Requests).Text);
+    }
+
+    [Fact]
+    public void RunningApplicationsDefaultsToFullDetailsAndCanSkipThem()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "chrome", "Chrome", @"C:\chrome.exe"));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Applications = applications
+        });
+
+        runtime.Reload("""hs.application.runningApplications();""");
+        Assert.True(applications.LastIncludeDetails);
+
+        runtime.Reload("""hs.application.runningApplications({ includeDetails: false });""");
+        Assert.False(applications.LastIncludeDetails);
+    }
+
+    [Fact]
+    public void RunningApplicationsRejectsNonBooleanIncludeDetails()
+    {
+        var presenter = new CapturingAlertPresenter();
+        var applications = new CapturingApplicationProvider(
+            new ApplicationSnapshot(123, "chrome", "Chrome", @"C:\chrome.exe"));
+        using var runtime = new ScriptRuntime(new ScriptRuntimeServices
+        {
+            Alerts = presenter,
+            Applications = applications
+        });
+
+        var exception = Assert.ThrowsAny<Exception>(
+            () => runtime.Reload("""hs.application.runningApplications({ includeDetails: "yes" });"""));
+
+        Assert.Contains("includeDetails", exception.Message, StringComparison.Ordinal);
+    }
+
     private sealed class CapturingAlertPresenter : IAlertPresenter
     {
         public List<AlertRequest> Requests { get; } = [];
@@ -2028,8 +2321,11 @@ public sealed class ScriptRuntimeTests
                 string.Equals(application.ProcessName, normalizedName, StringComparison.OrdinalIgnoreCase));
         }
 
-        public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
+        public bool? LastIncludeDetails { get; private set; }
+
+        public IReadOnlyList<ApplicationSnapshot> GetRunningApplications(bool includeDetails)
         {
+            LastIncludeDetails = includeDetails;
             return _applications;
         }
     }

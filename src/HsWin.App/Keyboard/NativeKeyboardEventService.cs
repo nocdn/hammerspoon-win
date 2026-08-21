@@ -30,6 +30,16 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
     private readonly KeyboardModifierTracker _modifierTracker = new();
     private readonly List<KeyboardWatchSubscription> _subscriptions = [];
 
+    // Immutable snapshot of _subscriptions, rebuilt under _gate on every mutation and read
+    // without allocation on the hook thread (which must not copy the list per keystroke).
+    private KeyboardWatchSubscription[] _subscriptionSnapshot = [];
+
+    // Physical modifier state published for lock-free readers (the mouse hook samples this
+    // five times per event while holding its own gate; taking this service's lock there
+    // nested cross-hook locking). Written only under _gate alongside the tracker.
+    private volatile bool _modifiersTracked;
+    private volatile HotkeyModifiers _publishedModifiers;
+
     private IntPtr _hookHandle;
     private Thread? _hookThread;
     private uint _hookThreadId;
@@ -78,6 +88,8 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
                 _subscriptions.Add(subscription);
             }
 
+            RebuildSubscriptionSnapshot();
+
             _logger.Info(
                 $"Keyboard watch registered id={subscription.Id} includeInjected={options.IncludeInjected} blocking={options.Blocking} " +
                 $"prepend={options.Prepend} keys={FormatKeyFilter(options.KeyFilter)} count={_subscriptions.Count}.");
@@ -118,15 +130,17 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         var modifier = KeyboardKeyRules.ModifierForVirtualKey(virtualKey);
         if (modifier != HotkeyModifiers.None)
         {
-            lock (_gate)
+            // Capture the state first, then the flag: if the hook is being torn down between
+            // the two reads, the captured state is still the last-published truth rather than
+            // a torn true/None pair. SendInput key-up events intentionally alter
+            // GetAsyncKeyState even though the user still physically holds the modifier; the
+            // LL hook tracker ignores injected events, so it remains the source of truth while
+            // our hook is installed. The published state is read without the service lock so
+            // other hook threads never nest locks against this service.
+            var publishedModifiers = _publishedModifiers;
+            if (_modifiersTracked)
             {
-                // SendInput key-up events intentionally alter GetAsyncKeyState even though the
-                // user still physically holds the modifier. The LL hook tracker ignores injected
-                // events, so it remains the source of truth while our hook is installed.
-                if (_hookHandle != IntPtr.Zero)
-                {
-                    return IsTrackedModifierDown(virtualKey, _modifierTracker.Pressed);
-                }
+                return IsTrackedModifierDown(virtualKey, publishedModifiers);
             }
         }
 
@@ -154,6 +168,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             }
 
             _subscriptions.Clear();
+            RebuildSubscriptionSnapshot();
             _hostPriorityHandler = null;
             _modifierTracker.Reset();
             UninstallHook();
@@ -181,6 +196,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             if (!isInjected)
             {
                 _modifierTracker.Apply(hookData.VkCode, isKeyUp);
+                _publishedModifiers = _modifierTracker.Pressed;
             }
 
             hostPriorityHandler = _hostPriorityHandler;
@@ -190,7 +206,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             }
 
             snapshot = CreateSnapshot(hookData.VkCode, isKeyUp, isInjected);
-            subscriptions = _subscriptions.Count == 0 ? [] : [.. _subscriptions];
+            subscriptions = _subscriptionSnapshot;
         }
 
         // Host priority (emergency stop) always runs first, never behind script remaps/watchers.
@@ -215,10 +231,10 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         }
 
         bool shouldSwallow;
-        using (KeyboardHookDispatchScope.Enter(_logger, FormatKeyboardEvent(snapshot, hookData, message)))
+        using (KeyboardHookDispatchScope.Enter(_logger, snapshot, hookData.ScanCode, hookData.Flags, message))
         {
             shouldSwallow = _watchDispatcher.Dispatch(snapshot, subscriptions);
-            LogKeyboardEventDispatch(snapshot, hookData, message, shouldSwallow);
+            LogKeyboardEventDispatch(snapshot, shouldSwallow);
         }
 
         return shouldSwallow
@@ -252,6 +268,7 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             }
 
             _logger.Info($"Keyboard watch disposed id={subscription.Id} count={_subscriptions.Count}.");
+            RebuildSubscriptionSnapshot();
             if (_subscriptions.Count == 0 && _hostPriorityHandler is null)
             {
                 _modifierTracker.Reset();
@@ -307,6 +324,15 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         {
             throw new InvalidOperationException("WH_KEYBOARD_LL hook thread started without publishing a hook handle.");
         }
+
+        // Publish tracked modifier state for lock-free IsKeyDown readers while the hook runs.
+        _publishedModifiers = _modifierTracker.Pressed;
+        _modifiersTracked = true;
+    }
+
+    private void RebuildSubscriptionSnapshot()
+    {
+        _subscriptionSnapshot = [.. _subscriptions];
     }
 
     private void HookThreadMain(ManualResetEventSlim ready)
@@ -338,6 +364,11 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
 
     private void UninstallHook()
     {
+        // Lock-free modifier readers must fall back to GetAsyncKeyState once tracking stops.
+        // The published modifiers stay at their last value: readers gate on the flag below,
+        // and clearing them here could pair a stale flag with a cleared value (torn read).
+        _modifiersTracked = false;
+
         var hookHandle = _hookHandle;
         if (hookHandle == IntPtr.Zero)
         {
@@ -379,26 +410,19 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
             || hookData.ExtraInfo == HsWin.App.Input.KeyboardInputSender.InjectedExtraInfo;
     }
 
-    private void LogKeyboardEventDispatch(
-        KeyboardEventSnapshot snapshot,
-        KeyboardHookStruct hookData,
-        int message,
-        bool shouldSwallow)
+    private void LogKeyboardEventDispatch(KeyboardEventSnapshot snapshot, bool shouldSwallow)
     {
-        if (!shouldSwallow && !IsNavigationDiagnosticKey(snapshot.KeyCode))
+        if (!shouldSwallow)
         {
             return;
         }
 
+        // Swallowed events are actionable diagnostics (something consumed the key); everything
+        // else fires at typing rate and is deliberately not logged from the hook path.
         _logger.Info(
-            $"Keyboard event key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} scan=0x{hookData.ScanCode:X2} " +
-            $"flags=0x{hookData.Flags:X2} message=0x{message:X4} injected={snapshot.IsInjected} extended={snapshot.IsExtended} " +
-            $"swallow={shouldSwallow} deferredActions={KeyboardHookDispatchScope.CurrentDeferredActionCount}.");
-    }
-
-    private static bool IsNavigationDiagnosticKey(uint virtualKey)
-    {
-        return virtualKey is 0x21 or 0x22 or 0x23 or 0x24;
+            $"Keyboard event swallowed key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} " +
+            $"injected={snapshot.IsInjected} extended={snapshot.IsExtended} " +
+            $"deferredActions={KeyboardHookDispatchScope.CurrentDeferredActionCount}.");
     }
 
     private static string FormatKeyFilter(IReadOnlySet<uint>? keyFilter)
@@ -406,16 +430,6 @@ internal sealed partial class NativeKeyboardEventService : IKeyboardEventService
         return keyFilter is { Count: > 0 }
             ? string.Join(",", keyFilter.Select(key => $"0x{key:X2}"))
             : "<all>";
-    }
-
-    private static string FormatKeyboardEvent(
-        KeyboardEventSnapshot snapshot,
-        KeyboardHookStruct hookData,
-        int message)
-    {
-        return
-            $"key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} scan=0x{hookData.ScanCode:X2} " +
-            $"flags=0x{hookData.Flags:X2} message=0x{message:X4} injected={snapshot.IsInjected} extended={snapshot.IsExtended}";
     }
 
     [StructLayout(LayoutKind.Sequential)]

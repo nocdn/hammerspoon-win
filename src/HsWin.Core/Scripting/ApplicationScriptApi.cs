@@ -29,11 +29,44 @@ public sealed class ApplicationScriptApi
         return result;
     }
 
-    public string GetRunningApplicationsJson()
+    public string GetRunningApplicationsJson(object? options = null)
     {
-        var applications = _applications.GetRunningApplications();
-        _logger.Info($"Script hs.application.runningApplications() returned {applications.Count} processes.");
+        var includeDetails = ParseIncludeDetails(options);
+        var applications = _applications.GetRunningApplications(includeDetails);
+        _logger.Info($"Script hs.application.runningApplications() returned {applications.Count} processes includeDetails={includeDetails}.");
         return ScriptJson.Serialize(applications);
+    }
+
+    /// <summary>
+    /// Defaults to true so existing scripts keep seeing title/path. Passing
+    /// { includeDetails: false } returns pid/processName only and skips the per-process
+    /// module reads that make the full snapshot expensive on large process tables.
+    /// </summary>
+    private static bool ParseIncludeDetails(object? options)
+    {
+        if (ScriptArgumentReader.IsMissing(options))
+        {
+            return true;
+        }
+
+        var value = ScriptArgumentReader.GetPropertyValue(options, "includeDetails", "details");
+        if (ScriptArgumentReader.IsMissing(value))
+        {
+            return true;
+        }
+
+        try
+        {
+            return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        }
+        catch (InvalidCastException)
+        {
+            throw new ArgumentException("options.includeDetails must be a boolean.", nameof(options));
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("options.includeDetails must be a boolean.", nameof(options));
+        }
     }
 
     public string LaunchJson(object? target, object? options = null)

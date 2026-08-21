@@ -1,47 +1,74 @@
+using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
 
 namespace HsWin.App.Keyboard;
 
+/// <summary>
+/// Per-dispatch scope that lets input triggered synchronously by a blocking keyboard watcher
+/// (for example a remap's injected tap) be deferred until after the hook callback returns.
+/// Entered once per keystroke on the dedicated WH_KEYBOARD_LL thread; deferral is rare, so the
+/// scope avoids allocating until a caller actually defers. The scope is tracked with a
+/// thread-static field rather than AsyncLocal because every dispatch runs on that single hook
+/// thread and ExecutionContext churn is measurable at keystroke rate.
+/// </summary>
 internal sealed class KeyboardHookDispatchScope : IDisposable
 {
-    private static readonly AsyncLocal<KeyboardHookDispatchScope?> CurrentScope = new();
+    [ThreadStatic]
+    private static KeyboardHookDispatchScope? currentScope;
 
     private readonly IRuntimeLogger _logger;
+    private readonly KeyboardEventSnapshot _snapshot;
+    private readonly uint _scanCode;
+    private readonly uint _flags;
+    private readonly int _message;
     private readonly KeyboardHookDispatchScope? _previousScope;
-    private readonly string _sourceDescription;
-    private readonly List<DeferredAction> _deferredActions = [];
+    private List<DeferredAction>? _deferredActions;
     private bool _disposed;
 
-    private KeyboardHookDispatchScope(IRuntimeLogger logger, string sourceDescription)
+    private KeyboardHookDispatchScope(
+        IRuntimeLogger logger,
+        KeyboardEventSnapshot snapshot,
+        uint scanCode,
+        uint flags,
+        int message)
     {
         _logger = logger;
-        _sourceDescription = sourceDescription;
-        _previousScope = CurrentScope.Value;
-        CurrentScope.Value = this;
+        _snapshot = snapshot;
+        _scanCode = scanCode;
+        _flags = flags;
+        _message = message;
+        _previousScope = currentScope;
+        currentScope = this;
     }
 
-    public static IDisposable Enter(IRuntimeLogger logger, string sourceDescription)
+    public static IDisposable Enter(
+        IRuntimeLogger logger,
+        KeyboardEventSnapshot snapshot,
+        uint scanCode,
+        uint flags,
+        int message)
     {
-        return new KeyboardHookDispatchScope(logger, sourceDescription);
+        return new KeyboardHookDispatchScope(logger, snapshot, scanCode, flags, message);
     }
 
     public static bool TryDefer(Action action, string description)
     {
         ArgumentNullException.ThrowIfNull(action);
 
-        var scope = CurrentScope.Value;
+        var scope = currentScope;
         if (scope is null || scope._disposed)
         {
             return false;
         }
 
+        scope._deferredActions ??= [];
         scope._deferredActions.Add(new DeferredAction(action, description));
         scope._logger.Info(
-            $"Keyboard remap input deferred action='{description}' source={scope._sourceDescription} pending={scope._deferredActions.Count}.");
+            $"Keyboard remap input deferred action='{description}' source={scope.FormatSource()} pending={scope._deferredActions.Count}.");
         return true;
     }
 
-    public static int CurrentDeferredActionCount => CurrentScope.Value?._deferredActions.Count ?? 0;
+    public static int CurrentDeferredActionCount => currentScope?._deferredActions?.Count ?? 0;
 
     public void Dispose()
     {
@@ -51,15 +78,15 @@ internal sealed class KeyboardHookDispatchScope : IDisposable
         }
 
         _disposed = true;
-        CurrentScope.Value = _previousScope;
+        currentScope = _previousScope;
 
-        if (_deferredActions.Count == 0)
+        if (_deferredActions is not { Count: > 0 })
         {
             return;
         }
 
         var actions = _deferredActions.ToArray();
-        _logger.Info($"Keyboard remap dispatch completed source={_sourceDescription} deferredActions={actions.Length}; scheduling injected input.");
+        _logger.Info($"Keyboard remap dispatch completed source={FormatSource()} deferredActions={actions.Length}; scheduling injected input.");
         ThreadPool.QueueUserWorkItem(static state =>
         {
             var (deferredActions, logger, sourceDescription) =
@@ -77,7 +104,15 @@ internal sealed class KeyboardHookDispatchScope : IDisposable
                     logger.Error($"Deferred keyboard hook action failed '{deferredAction.Description}'.", exception);
                 }
             }
-        }, (actions, _logger, _sourceDescription));
+        }, (actions, _logger, FormatSource()));
+    }
+
+    private string FormatSource()
+    {
+        var snapshot = _snapshot;
+        return
+            $"key='{snapshot.Key}' type='{snapshot.Type}' vk=0x{snapshot.KeyCode:X2} scan=0x{_scanCode:X2} " +
+            $"flags=0x{_flags:X2} message=0x{_message:X4} injected={snapshot.IsInjected} extended={snapshot.IsExtended}";
     }
 
     private sealed record DeferredAction(Action Action, string Description);

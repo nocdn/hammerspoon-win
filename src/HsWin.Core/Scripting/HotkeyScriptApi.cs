@@ -58,14 +58,11 @@ public sealed class HotkeyScriptApi
                 throw new ArgumentException("Mouse held hotkeys do not support repeat/retrigger.", nameof(options));
             }
 
+            var buttonName = GetMouseButtonName(definition);
             var mouseRegistration = _hotkeys.RegisterHeld(
                 definition,
-                () => _callbacks.InvokeScriptCallback(
-                    pressedFunction,
-                    SerializeMouseEvent(definition, "mousedown", isDown: true)),
-                () => _callbacks.InvokeScriptCallback(
-                    releasedFunction,
-                    SerializeMouseEvent(definition, "mouseup", isDown: false)),
+                () => _callbacks.InvokeScriptCallback(pressedFunction, "mousedown", buttonName, true, false),
+                () => _callbacks.InvokeScriptCallback(releasedFunction, "mouseup", buttonName, false, true),
                 parsedOptions.Blocking);
             var mouseHandle = new ScriptResourceHandle(mouseRegistration);
             _trackResource(mouseHandle);
@@ -79,30 +76,39 @@ public sealed class HotkeyScriptApi
 
         var handler = new HeldHotkeyHandler(definition, parsedOptions, pressedFunction, releasedFunction, _callbacks);
         var watch = _keyboardEvents.Watch(
-            new KeyboardEventWatchOptions(parsedOptions.IncludeInjected, parsedOptions.Blocking),
+            new KeyboardEventWatchOptions(
+                parsedOptions.IncludeInjected,
+                parsedOptions.Blocking,
+                KeyFilter: CreateHeldHotkeyKeyFilter(definition)),
             handler.Handle);
         var handle = new ScriptResourceHandle(watch);
         _trackResource(handle);
         return handle;
     }
 
-    private static string SerializeMouseEvent(HotkeyDefinition definition, string type, bool isDown)
+    /// <summary>
+    /// Restricts the held-hotkey watch to keys its handler can act on (the hotkey key plus every
+    /// modifier VK, since the release path also matches modifier key-ups after activation). The
+    /// dispatcher then skips unrelated keystrokes before any callback work runs.
+    /// </summary>
+    private static HashSet<uint> CreateHeldHotkeyKeyFilter(HotkeyDefinition definition)
     {
-        var button = definition.MouseButton switch
+        var keyFilter = new HashSet<uint>(KeyboardKeyRules.AllModifierVirtualKeys)
+        {
+            definition.VirtualKey
+        };
+        return keyFilter;
+    }
+
+    private static string GetMouseButtonName(HotkeyDefinition definition)
+    {
+        return definition.MouseButton switch
         {
             HotkeyMouseButton.Middle => "middle",
             HotkeyMouseButton.XButton1 => "back",
             HotkeyMouseButton.XButton2 => "forward",
             _ => throw new ArgumentException("Mouse held hotkey requires a supported mouse button.", nameof(definition))
         };
-
-        return ScriptJson.Serialize(new
-        {
-            type,
-            button,
-            isDown,
-            isUp = !isDown
-        });
     }
 
     private static HotkeyHeldOptions ParseHeldOptions(object? value)
@@ -181,13 +187,33 @@ public sealed class HotkeyScriptApi
         /// <returns>false when a blocking fail-open skip occurred (script gate busy).</returns>
         private bool InvokeHeldCallback(ScriptObject function, KeyboardEventSnapshot snapshot)
         {
-            var eventJson = ScriptJson.Serialize(snapshot);
             if (_options.Blocking)
             {
-                return _callbacks.TryInvokeScriptCallbackFailOpen(function, out _, eventJson);
+                return _callbacks.TryInvokeScriptCallbackFailOpen(
+                    function,
+                    out _,
+                    snapshot.Type,
+                    snapshot.KeyCode,
+                    snapshot.Key,
+                    snapshot.ModifierFlags,
+                    snapshot.IsKeyDown,
+                    snapshot.IsKeyUp,
+                    snapshot.IsModifier,
+                    snapshot.IsInjected,
+                    snapshot.IsExtended);
             }
 
-            _callbacks.InvokeScriptCallback(function, eventJson);
+            _callbacks.InvokeScriptCallback(
+                function,
+                snapshot.Type,
+                snapshot.KeyCode,
+                snapshot.Key,
+                snapshot.ModifierFlags,
+                snapshot.IsKeyDown,
+                snapshot.IsKeyUp,
+                snapshot.IsModifier,
+                snapshot.IsInjected,
+                snapshot.IsExtended);
             return true;
         }
 

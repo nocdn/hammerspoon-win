@@ -13,7 +13,7 @@ public sealed class NullApplicationProvider : IApplicationProvider
         return false;
     }
 
-    public IReadOnlyList<ApplicationSnapshot> GetRunningApplications()
+    public IReadOnlyList<ApplicationSnapshot> GetRunningApplications(bool includeDetails)
     {
         return [];
     }

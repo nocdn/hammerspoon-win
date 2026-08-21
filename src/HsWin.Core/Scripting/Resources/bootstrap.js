@@ -26,6 +26,81 @@
 
   const parseJson = (json) => JSON.parse(json);
 
+  // Hot-path event adapters: the host passes primitive fields (cheaper to marshal than a
+  // serialized JSON string) and the helpers below rebuild the same frozen plain objects that
+  // JSON.parse used to produce. Modifier flags mirror HsWin.Core's HotkeyModifiers enum.
+  const MODIFIER_FLAG_ALT = 0x0001;
+  const MODIFIER_FLAG_CONTROL = 0x0002;
+  const MODIFIER_FLAG_SHIFT = 0x0004;
+  const MODIFIER_FLAG_WIN = 0x0008;
+
+  const modifierNamesFromFlags = (flags) => {
+    const names = [];
+    if (flags & MODIFIER_FLAG_CONTROL) { names.push("ctrl"); }
+    if (flags & MODIFIER_FLAG_ALT) { names.push("alt"); }
+    if (flags & MODIFIER_FLAG_SHIFT) { names.push("shift"); }
+    if (flags & MODIFIER_FLAG_WIN) { names.push("win"); }
+    return names;
+  };
+
+  const buildKeyboardEvent = (
+    type,
+    keyCode,
+    key,
+    modifierFlags,
+    isKeyDown,
+    isKeyUp,
+    isModifier,
+    isInjected,
+    isExtended
+  ) => ({
+    type,
+    keyCode,
+    key,
+    modifiers: modifierNamesFromFlags(modifierFlags),
+    modifierFlags,
+    isKeyDown,
+    isKeyUp,
+    isModifier,
+    isInjected,
+    isExtended
+  });
+
+  const buildMouseEvent = (type, button, isDown, isUp) => ({ type, button, isDown, isUp });
+
+  // Held hotkeys come in two shapes: mouse buttons pass (type, button, isDown, isUp) while
+  // keyboard keys pass the full keyboard-event field list.
+  const buildHeldEvent = (args) =>
+    args.length === 4
+      ? buildMouseEvent(args[0], args[1], args[2], args[3])
+      : buildKeyboardEvent(...args);
+
+  const buildScrollEvent = (
+    axis,
+    direction,
+    delta,
+    notches,
+    isVertical,
+    isHorizontal,
+    isInjected,
+    modifierFlags,
+    x,
+    y
+  ) => ({
+    type: "scroll",
+    axis,
+    direction,
+    delta,
+    notches,
+    isVertical,
+    isHorizontal,
+    isInjected,
+    modifiers: modifierNamesFromFlags(modifierFlags),
+    modifierFlags,
+    x,
+    y
+  });
+
   const rectangleCenter = (rectangle) => ({
     x: rectangle.x + (rectangle.width / 2),
     y: rectangle.y + (rectangle.height / 2)
@@ -556,8 +631,8 @@
         return host.Hotkeys.BindHeld(
           modifiers,
           key,
-          eventJson => pressedFn(parseJson(eventJson)),
-          eventJson => releasedFn(parseJson(eventJson)),
+          (...args) => pressedFn(buildHeldEvent(args)),
+          (...args) => releasedFn(buildHeldEvent(args)),
           options);
       },
 
@@ -586,8 +661,8 @@
         return host.Applications.IsRunning(processName);
       },
 
-      runningApplications() {
-        return parseJson(host.Applications.GetRunningApplicationsJson());
+      runningApplications(options) {
+        return parseJson(host.Applications.GetRunningApplicationsJson(options));
       },
 
       launch(target, options) {
@@ -698,12 +773,13 @@
           throw new Error("Mouse scroll watch callback must be a function.");
         }
 
-        // Callbacks always run off the low-level mouse hook. preventDefault swallows natively
+      // Callbacks always run off the low-level mouse hook. preventDefault swallows natively
         // while the watcher is registered; the return value is not used for swallow decisions.
-        return host.Mouse.WatchScroll((eventJson) => {
-          callback(parseJson(eventJson));
-          return false;
-        }, options);
+        return host.Mouse.WatchScroll(
+          (axis, direction, delta, notches, isVertical, isHorizontal, isInjected, modifierFlags, x, y) => {
+            callback(buildScrollEvent(axis, direction, delta, notches, isVertical, isHorizontal, isInjected, modifierFlags, x, y));
+            return false;
+          }, options);
       }
     }),
 
@@ -713,7 +789,10 @@
           throw new Error("Keyboard watch callback must be a function.");
         }
 
-        return host.Keyboard.Watch((eventJson) => callback(parseJson(eventJson)) === true, options);
+        return host.Keyboard.Watch(
+          (type, keyCode, key, modifierFlags, isKeyDown, isKeyUp, isModifier, isInjected, isExtended) =>
+            callback(buildKeyboardEvent(type, keyCode, key, modifierFlags, isKeyDown, isKeyUp, isModifier, isInjected, isExtended)) === true,
+          options);
       },
 
       remap(sourceKey, targetKey) {

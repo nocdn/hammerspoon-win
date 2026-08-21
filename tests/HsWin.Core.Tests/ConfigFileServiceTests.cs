@@ -18,6 +18,20 @@ public sealed class ConfigFileServiceTests
     }
 
     [Fact]
+    public void DefaultConfigRefreshesApexStateOnPressInsteadOfTimerPolling()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var configPath = Path.Combine(directory.Path, "config.js");
+        var service = new ConfigFileService(configPath);
+
+        service.EnsureConfigFile();
+
+        var config = File.ReadAllText(configPath);
+        Assert.DoesNotContain("doEvery(1000", config, StringComparison.Ordinal);
+        Assert.Contains("if (apex.refresh())", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EnsureConfigFileCreatesHardenedTurboRepeatState()
     {
         using var directory = TemporaryDirectory.Create();

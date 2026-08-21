@@ -16,6 +16,26 @@ public static class KeyboardKeyRules
     public const uint VkLeftWin = 0x5B;
     public const uint VkRightWin = 0x5C;
 
+    /// <summary>
+    /// Every virtual key <see cref="IsModifierVirtualKey"/> reports as a modifier. Callers that
+    /// must observe all modifier events (for example watch key filters that need modifier
+    /// key-ups) MUST derive their set from this list rather than copying it.
+    /// </summary>
+    public static readonly uint[] AllModifierVirtualKeys =
+    [
+        VkShift,
+        VkControl,
+        VkMenu,
+        VkLeftShift,
+        VkRightShift,
+        VkLeftControl,
+        VkRightControl,
+        VkLeftMenu,
+        VkRightMenu,
+        VkLeftWin,
+        VkRightWin
+    ];
+
     private static readonly IReadOnlyDictionary<uint, string> KeyNames =
         new Dictionary<uint, string>
         {
@@ -58,6 +78,77 @@ public static class KeyboardKeyRules
             [0xDE] = "'"
         };
 
+    private const int DisplayNameTableSize = 256;
+
+    // Resolved once per process: GetDisplayName runs on the WH_KEYBOARD_LL path for every
+    // keystroke system-wide, so the common VK range must be a plain table lookup.
+    private static readonly string?[] DisplayNameByVk = BuildDisplayNameTable();
+
+    // Cached per HotkeyModifiers combination; GetModifierNames also runs per keystroke/scroll
+    // event. Returned arrays are SHARED — callers must treat them as read-only.
+    private static readonly string[][] ModifierNamesByFlags = BuildModifierNames();
+
+    private static string?[] BuildDisplayNameTable()
+    {
+        var names = new string?[DisplayNameTableSize];
+
+        for (var letter = 'A'; letter <= 'Z'; letter++)
+        {
+            names[letter] = char.ToLowerInvariant(letter).ToString();
+        }
+
+        for (var digit = '0'; digit <= '9'; digit++)
+        {
+            names[digit] = digit.ToString();
+        }
+
+        for (var functionKey = 0; functionKey <= 0x17; functionKey++)
+        {
+            names[0x70 + functionKey] = $"f{functionKey + 1}";
+        }
+
+        foreach (var (virtualKey, name) in KeyNames)
+        {
+            names[virtualKey] = name;
+        }
+
+        return names;
+    }
+
+    private static string[][] BuildModifierNames()
+    {
+        var all = HotkeyModifiers.Alt | HotkeyModifiers.Control | HotkeyModifiers.Shift | HotkeyModifiers.Win;
+        var tables = new string[16][];
+        for (var flags = 0; flags < tables.Length; flags++)
+        {
+            var modifiers = (HotkeyModifiers)flags & all;
+            var names = new List<string>(4);
+            if ((modifiers & HotkeyModifiers.Control) != 0)
+            {
+                names.Add("ctrl");
+            }
+
+            if ((modifiers & HotkeyModifiers.Alt) != 0)
+            {
+                names.Add("alt");
+            }
+
+            if ((modifiers & HotkeyModifiers.Shift) != 0)
+            {
+                names.Add("shift");
+            }
+
+            if ((modifiers & HotkeyModifiers.Win) != 0)
+            {
+                names.Add("win");
+            }
+
+            tables[flags] = [.. names];
+        }
+
+        return tables;
+    }
+
     public static bool IsModifierVirtualKey(uint virtualKey)
     {
         return virtualKey switch
@@ -92,19 +183,12 @@ public static class KeyboardKeyRules
 
     public static string GetDisplayName(uint virtualKey)
     {
-        if (virtualKey is >= 'A' and <= 'Z' or >= '0' and <= '9')
+        if (virtualKey < DisplayNameTableSize && DisplayNameByVk[virtualKey] is { } name)
         {
-            return ((char)virtualKey).ToString().ToLowerInvariant();
+            return name;
         }
 
-        if (virtualKey is >= 0x70 and <= 0x87)
-        {
-            return $"f{virtualKey - 0x70 + 1}";
-        }
-
-        return KeyNames.TryGetValue(virtualKey, out var name)
-            ? name
-            : $"vk:0x{virtualKey:X2}";
+        return $"vk:0x{virtualKey:X2}";
     }
 
     public static IReadOnlyList<uint> GetModifierVirtualKeys(HotkeyModifiers modifiers)
@@ -133,29 +217,15 @@ public static class KeyboardKeyRules
         return virtualKeys;
     }
 
+    /// <summary>
+    /// Returns the script-facing modifier names for the given flags in the stable order
+    /// ctrl, alt, shift, win. The returned array is cached and shared across calls —
+    /// callers must not mutate it.
+    /// </summary>
     public static string[] GetModifierNames(HotkeyModifiers modifiers)
     {
-        var names = new List<string>(4);
-        if ((modifiers & HotkeyModifiers.Control) != 0)
-        {
-            names.Add("ctrl");
-        }
-
-        if ((modifiers & HotkeyModifiers.Alt) != 0)
-        {
-            names.Add("alt");
-        }
-
-        if ((modifiers & HotkeyModifiers.Shift) != 0)
-        {
-            names.Add("shift");
-        }
-
-        if ((modifiers & HotkeyModifiers.Win) != 0)
-        {
-            names.Add("win");
-        }
-
-        return [.. names];
+        var flags = (uint)modifiers
+            & (uint)(HotkeyModifiers.Alt | HotkeyModifiers.Control | HotkeyModifiers.Shift | HotkeyModifiers.Win);
+        return ModifierNamesByFlags[flags];
     }
 }

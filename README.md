@@ -301,9 +301,9 @@ If a hotkey, keyboard-watch, or timer callback throws, the runtime shows an erro
 
 ### `hs.application.isRunning(processName)`
 
-Returns whether a process with the given name is running. The name may include or omit the `.exe` extension; matching is case-insensitive and compares the executable file name.
+Returns whether a process with that name is running. The name may include or omit the `.exe` extension; matching is case-insensitive and compares the executable file name.
 
-Each call asks Windows for processes with that name, which is fine occasionally but costs a few milliseconds on a hotkey path. For bindings you press often, cache the result in JavaScript and refresh it on a timer instead of calling `isRunning` inside the hotkey callback:
+Each call asks Windows for processes with that name, which costs a few milliseconds. That is fine on a hotkey press, but avoid calling it from a tight timer loop: a `doEvery(1000, () => apex.refresh())` poll keeps the process-table cost and a log line running forever. Cache the answer in JavaScript and refresh it when the user actually presses a binding:
 
 ```js
 const apex = {
@@ -317,19 +317,20 @@ const apex = {
 };
 
 apex.refresh();
-hs.timer.doEvery(1000, () => apex.refresh());
 
 hs.hotkey.bind([], "`", () => {
-  if (apex.isRunning) {
+  if (apex.refresh()) {
     hs.alert.show("Play/Pause", { durationMs: 400 });
     hs.media.playPause();
   }
 });
 ```
 
-A 1-second refresh is usually enough for game/media guards and keeps hotkeys responsive. The status hotkey in the default config calls `apex.refresh()` immediately when you want an up-to-date answer.
+Hotkey callbacks (`hs.hotkey.bind`) run off the input hook, so the few-millisecond query never delays physical input. **Blocking keyboard-watch callbacks (`hs.keyboard.watch(..., { blocking: true })`) do run on the input hook**, though — if you refresh state from one, keep a short cache (for example, trust a `true` result for a few seconds) so the hook path stays tiny.
 
-### `hs.application.runningApplications()`
+A slow timer refresh is another option when a script genuinely needs the answer to stay current without user interaction, but pick the longest interval that still works — a process query per tick is real CPU and a runtime-log line per tick.
+
+### `hs.application.runningApplications(options?)`
 
 Returns an array of running application snapshots:
 
@@ -339,7 +340,12 @@ for (const app of hs.application.runningApplications()) {
 }
 ```
 
-Each item has `pid`, `processName`, `mainWindowTitle`, and `path`.
+Each item has `pid`, `processName`, `mainWindowTitle`, and `path`. Reading titles and executable paths requires per-process module queries that get expensive on large process tables and can fail for elevated processes, so pass `{ includeDetails: false }` when you only need names and pids (for example to find an app by name):
+
+```js
+const apps = hs.application.runningApplications({ includeDetails: false });
+const apexRunning = apps.some(app => app.processName === "r5apex");
+```
 
 ### `hs.application.launch(target, options?)`
 

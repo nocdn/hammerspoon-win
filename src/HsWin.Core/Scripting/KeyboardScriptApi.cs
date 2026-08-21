@@ -40,12 +40,25 @@ public sealed class KeyboardScriptApi
             parsedOptions,
             keyboardEvent =>
             {
-                var eventJson = ScriptJson.Serialize(keyboardEvent);
-                // Blocking watchers run on WH_KEYBOARD_LL — fail-open if the script gate is busy
-                // so a wedged UI callback cannot freeze the physical keyboard.
+                // Primitive fields marshal into V8 far cheaper than a serialized JSON string
+                // (bootstrap.js rebuilds the frozen event object from them). Field order must
+                // match the bootstrap adapter's parameter list.
                 if (parsedOptions.Blocking)
                 {
-                    if (!_callbacks.TryInvokeScriptCallbackFailOpen(scriptFunction, out var blockingResult, eventJson))
+                    // Blocking watchers run on WH_KEYBOARD_LL — fail-open if the script gate is busy
+                    // so a wedged UI callback cannot freeze the physical keyboard.
+                    if (!_callbacks.TryInvokeScriptCallbackFailOpen(
+                            scriptFunction,
+                            out var blockingResult,
+                            keyboardEvent.Type,
+                            keyboardEvent.KeyCode,
+                            keyboardEvent.Key,
+                            keyboardEvent.ModifierFlags,
+                            keyboardEvent.IsKeyDown,
+                            keyboardEvent.IsKeyUp,
+                            keyboardEvent.IsModifier,
+                            keyboardEvent.IsInjected,
+                            keyboardEvent.IsExtended))
                     {
                         return false; // pass key through
                     }
@@ -53,7 +66,17 @@ public sealed class KeyboardScriptApi
                     return Convert.ToBoolean(blockingResult, CultureInfo.InvariantCulture);
                 }
 
-                var result = _callbacks.InvokeScriptCallback(scriptFunction, eventJson);
+                var result = _callbacks.InvokeScriptCallback(
+                    scriptFunction,
+                    keyboardEvent.Type,
+                    keyboardEvent.KeyCode,
+                    keyboardEvent.Key,
+                    keyboardEvent.ModifierFlags,
+                    keyboardEvent.IsKeyDown,
+                    keyboardEvent.IsKeyUp,
+                    keyboardEvent.IsModifier,
+                    keyboardEvent.IsInjected,
+                    keyboardEvent.IsExtended);
                 var requestedSwallow = Convert.ToBoolean(result, CultureInfo.InvariantCulture);
 
                 if (requestedSwallow)
@@ -92,9 +115,8 @@ public sealed class KeyboardScriptApi
                     return false;
                 }
 
-                _logger.Info(
-                    $"Keyboard remap matched source='{sourceName}' target='{targetName}' type='{keyboardEvent.Type}' " +
-                    $"sourceVk=0x{sourceVirtualKey:X2} targetVk=0x{targetVirtualKey:X2}.");
+                // No per-keystroke logging here: remap matches fire at typing rate on the
+                // WH_KEYBOARD_LL thread and the registration log already states the mapping.
                 if (keyboardEvent.IsKeyDown)
                 {
                     _keyboardInput.Tap(targetVirtualKey, KeyboardTapOptions.Default);

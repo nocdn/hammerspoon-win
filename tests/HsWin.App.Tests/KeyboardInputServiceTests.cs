@@ -29,7 +29,12 @@ public sealed class KeyboardInputServiceTests
         var sender = new CapturingKeyboardInputSender();
         var service = new KeyboardInputService(logger, sender);
 
-        using (var scope = KeyboardHookDispatchScope.Enter(logger, "key='pageup' type='keydown' vk=0x21"))
+        using (var scope = KeyboardHookDispatchScope.Enter(
+                   logger,
+                   new KeyboardEventSnapshot("keydown", 0x21, "pageup", [], 0, true, false, false, false, false),
+                   scanCode: 0x49,
+                   flags: 0x10,
+                   message: 0x0100))
         {
             service.Tap(0x23, KeyboardTapOptions.Default);
 
@@ -48,26 +53,55 @@ public sealed class KeyboardInputServiceTests
     }
 
     [Fact]
-    public void TapWithCapturedDisposedKeyboardHookDispatchSendsImmediately()
+    public void TapAfterKeyboardHookDispatchDisposedSendsImmediately()
     {
         var logger = new CapturingRuntimeLogger();
         var sender = new CapturingKeyboardInputSender();
         var service = new KeyboardInputService(logger, sender);
-        ExecutionContext? capturedContext;
 
-        using (KeyboardHookDispatchScope.Enter(logger, "key='backspace' type='keydown' vk=0x08"))
+        using (KeyboardHookDispatchScope.Enter(
+                   logger,
+                   new KeyboardEventSnapshot("keydown", 0x08, "backspace", [], 0, true, false, false, false, false),
+                   scanCode: 0x0E,
+                   flags: 0,
+                   message: 0x0100))
         {
-            capturedContext = ExecutionContext.Capture();
         }
 
-        Assert.NotNull(capturedContext);
-        ExecutionContext.Run(capturedContext, _ => service.Tap(0x24, KeyboardTapOptions.Default), null);
+        service.Tap(0x24, KeyboardTapOptions.Default);
 
         var action = Assert.Single(sender.Actions);
         Assert.Equal("tap:0x24:sendInput", action);
         Assert.DoesNotContain(
             logger.Infos,
             info => info.Contains("Keyboard remap input deferred", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TapFromAnotherThreadDuringKeyboardHookDispatchSendsImmediately()
+    {
+        // The dispatch scope is local to the hook thread by design: only input sent
+        // synchronously by the hook dispatch itself (remaps) is deferred. Script callbacks
+        // scheduled onto other threads send inline.
+        var logger = new CapturingRuntimeLogger();
+        var sender = new CapturingKeyboardInputSender();
+        var service = new KeyboardInputService(logger, sender);
+
+        using (KeyboardHookDispatchScope.Enter(
+                   logger,
+                   new KeyboardEventSnapshot("keydown", 0x42, "b", [], 0, true, false, false, false, false),
+                   scanCode: 0x30,
+                   flags: 0,
+                   message: 0x0100))
+        {
+            await Task.Run(() => service.Tap(0x24, KeyboardTapOptions.Default));
+
+            var action = Assert.Single(sender.Actions);
+            Assert.Equal("tap:0x24:sendInput", action);
+            Assert.DoesNotContain(
+                logger.Infos,
+                info => info.Contains("Keyboard remap input deferred", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
@@ -369,5 +403,30 @@ public sealed class KeyboardInputServiceTests
         {
             Errors.Add($"{message} {exception.Message}");
         }
+    }
+
+    [Fact]
+    public void NestedKeyboardHookDispatchScopesRestoreCorrectly()
+    {
+        var logger = new CapturingRuntimeLogger();
+        var sender = new CapturingKeyboardInputSender();
+        var service = new KeyboardInputService(logger, sender);
+        var outerSnapshot = new KeyboardEventSnapshot("keydown", 0x42, "b", [], 0, true, false, false, false, false);
+        var innerSnapshot = new KeyboardEventSnapshot("keydown", 0x43, "c", [], 0, true, false, false, false, false);
+
+        using (KeyboardHookDispatchScope.Enter(logger, outerSnapshot, 0x30, 0, 0x0100))
+        {
+            using (KeyboardHookDispatchScope.Enter(logger, innerSnapshot, 0x2E, 0, 0x0100))
+            {
+                service.Tap(0x23, KeyboardTapOptions.Default);
+                Assert.Empty(sender.Actions);
+            }
+
+            // Inner scope disposed: the outer scope must still capture deferrals.
+            service.Tap(0x24, KeyboardTapOptions.Default);
+            Assert.Empty(sender.Actions);
+        }
+
+        Assert.True(sender.WaitForActionCount(2, TimeSpan.FromSeconds(2)));
     }
 }

@@ -33,10 +33,42 @@ public sealed class KeyboardKeyRulesTests
 
     [Theory]
     [InlineData((uint)'W', "w")]
+    [InlineData((uint)'0', "0")]
+    [InlineData((uint)'9', "9")]
     [InlineData(0x21, "pageup")]
     [InlineData(0xC0, "`")]
+    [InlineData(0x70, "f1")]
+    [InlineData(0x81, "f18")]
+    [InlineData(0x87, "f24")]
+    [InlineData(0xE9, "vk:0xE9")]
+    [InlineData(0x1FF, "vk:0x1FF")]
     public void GetDisplayNameReturnsScriptFriendlyNames(uint virtualKey, string expected)
     {
         Assert.Equal(expected, KeyboardKeyRules.GetDisplayName(virtualKey));
+    }
+
+    [Fact]
+    public void GetModifierNamesReturnsCachedSharedArraysInStableOrder()
+    {
+        Assert.Equal(
+            ["ctrl", "alt", "shift", "win"],
+            KeyboardKeyRules.GetModifierNames(
+                HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift | HotkeyModifiers.Win));
+        Assert.Equal([], KeyboardKeyRules.GetModifierNames(HotkeyModifiers.None));
+        Assert.Equal(["alt"], KeyboardKeyRules.GetModifierNames(HotkeyModifiers.Alt));
+        Assert.Equal(["shift", "win"], KeyboardKeyRules.GetModifierNames(HotkeyModifiers.Shift | HotkeyModifiers.Win));
+
+        // Repeated calls share one array per flag combination (per-event allocation-free).
+        var first = KeyboardKeyRules.GetModifierNames(HotkeyModifiers.Control);
+        var second = KeyboardKeyRules.GetModifierNames(HotkeyModifiers.Control);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void GetModifierNamesIgnoresNoRepeatFlag()
+    {
+        Assert.Equal(
+            ["ctrl"],
+            KeyboardKeyRules.GetModifierNames(HotkeyModifiers.Control | HotkeyModifiers.NoRepeat));
     }
 }

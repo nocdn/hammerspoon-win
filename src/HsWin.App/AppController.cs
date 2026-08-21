@@ -550,6 +550,7 @@ internal sealed class AppController : IDisposable
         _logger.Info("Toast presenter disposed.");
         _singleInstanceGuard.Dispose();
         _logger.Info("Single instance guard disposed.");
+        _scriptConsoleLogger.Dispose();
         _disposed = true;
         _logger.Dispose();
     }

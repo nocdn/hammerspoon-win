@@ -19,70 +19,76 @@ internal static class PreviousInstanceCleaner
         var currentSessionId = TryGetSessionId(currentProcess);
         var currentExecutablePath = TryGetExecutablePath(currentProcess);
 
-        var inspected = 0;
+        var candidates = 0;
         var pathChecks = 0;
         var matched = 0;
         var stopped = 0;
         var failed = 0;
 
-        foreach (var process in Process.GetProcesses())
+        // Only processes whose names can ever match (the matcher terminates by known name or by
+        // path equality with this executable) are inspected. Querying by name avoids walking the
+        // whole process table — including MainModule reads — on every launch of a login-start app.
+        foreach (var candidateName in PreviousInstanceProcessMatcher.CandidateProcessNames(currentExecutablePath))
         {
-            using (process)
+            foreach (var process in Process.GetProcessesByName(candidateName))
             {
-                inspected++;
-
-                var processId = process.Id;
-                if (processId == currentProcessId)
+                using (process)
                 {
-                    continue;
-                }
+                    candidates++;
 
-                var processName = TryGetProcessName(process);
-                var sessionId = TryGetSessionId(process);
-                var shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
-                    processId,
-                    currentProcessId,
-                    processName,
-                    sessionId,
-                    currentSessionId,
-                    candidateExecutablePath: null,
-                    currentExecutablePath);
+                    var processId = process.Id;
+                    if (processId == currentProcessId)
+                    {
+                        continue;
+                    }
 
-                string? executablePath = null;
-                if (!shouldTerminate && PreviousInstanceProcessMatcher.ShouldReadExecutablePath(processName, currentExecutablePath))
-                {
-                    pathChecks++;
-                    executablePath = TryGetExecutablePath(process);
-                    shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
+                    var processName = TryGetProcessName(process);
+                    var sessionId = TryGetSessionId(process);
+                    var shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
                         processId,
                         currentProcessId,
                         processName,
                         sessionId,
                         currentSessionId,
-                        executablePath,
+                        candidateExecutablePath: null,
                         currentExecutablePath);
-                }
 
-                if (!shouldTerminate)
-                {
-                    continue;
-                }
+                    string? executablePath = null;
+                    if (!shouldTerminate && PreviousInstanceProcessMatcher.ShouldReadExecutablePath(processName, currentExecutablePath))
+                    {
+                        pathChecks++;
+                        executablePath = TryGetExecutablePath(process);
+                        shouldTerminate = PreviousInstanceProcessMatcher.ShouldTerminate(
+                            processId,
+                            currentProcessId,
+                            processName,
+                            sessionId,
+                            currentSessionId,
+                            executablePath,
+                            currentExecutablePath);
+                    }
 
-                executablePath ??= TryGetExecutablePath(process);
-                matched++;
-                if (Terminate(process, processName, processId, executablePath, logger))
-                {
-                    stopped++;
-                }
-                else
-                {
-                    failed++;
+                    if (!shouldTerminate)
+                    {
+                        continue;
+                    }
+
+                    executablePath ??= TryGetExecutablePath(process);
+                    matched++;
+                    if (Terminate(process, processName, processId, executablePath, logger))
+                    {
+                        stopped++;
+                    }
+                    else
+                    {
+                        failed++;
+                    }
                 }
             }
         }
 
         logger.Info(
-            $"Previous instance cleanup completed inspected={inspected} pathChecks={pathChecks} matched={matched} stopped={stopped} failed={failed} " +
+            $"Previous instance cleanup completed candidates={candidates} pathChecks={pathChecks} matched={matched} stopped={stopped} failed={failed} " +
             $"elapsedMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
     }
 
@@ -165,6 +171,27 @@ internal static class PreviousInstanceProcessMatcher
         AppBranding.DisplayName,
         "HsWin.App"
     ];
+
+    /// <summary>
+    /// Process names the cleanup can ever act on: the known product names plus the current
+    /// executable's base name (the path-equality branch is only reachable for that name).
+    /// Callers enumerate candidates with Process.GetProcessesByName instead of scanning the
+    /// full process table.
+    /// </summary>
+    public static IReadOnlyList<string> CandidateProcessNames(string? currentExecutablePath)
+    {
+        var names = new List<string>(KnownProcessNames);
+        if (!string.IsNullOrWhiteSpace(currentExecutablePath))
+        {
+            var currentName = Path.GetFileNameWithoutExtension(currentExecutablePath);
+            if (!names.Contains(currentName, StringComparer.OrdinalIgnoreCase))
+            {
+                names.Add(currentName);
+            }
+        }
+
+        return names;
+    }
 
     public static bool ShouldTerminate(
         int candidateProcessId,

@@ -106,7 +106,6 @@ public sealed class ConfigFileService
         };
 
         apex.refresh();
-        hs.timer.doEvery(1000, () => apex.refresh());
 
         hs.hotkey.bind(["ctrl", "alt", "shift"], "F12", () => {
           const isRunning = apex.refresh();
@@ -118,20 +117,20 @@ public sealed class ConfigFileService
         });
 
         hs.hotkey.bind([], "`", () => {
-          if (apex.isRunning) {
+          if (apex.refresh()) {
             hs.alert.show("Play/Pause", { durationMs: 400 });
             hs.media.playPause();
           }
         });
 
         hs.hotkey.bind([], "delete", () => {
-          if (apex.isRunning) {
+          if (apex.refresh()) {
             hs.media.previousTrack();
           }
         });
 
         hs.hotkey.bind([], "pageup", () => {
-          if (apex.isRunning) {
+          if (apex.refresh()) {
             hs.media.nextTrack();
           }
         });
