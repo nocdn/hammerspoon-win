@@ -63,6 +63,21 @@ public sealed class ScriptRuntimeTests
     }
 
     [Fact]
+    public void ReloadSupportsCursorFollowingAlertStyle()
+    {
+        var presenter = new CapturingAlertPresenter();
+        using var runtime = new ScriptRuntime(presenter);
+
+        runtime.Reload("""hs.alert.show("Testing", { style: "following", durationMs: 6000 });""");
+
+        var request = Assert.Single(presenter.Requests);
+        Assert.Equal("Testing", request.Text);
+        Assert.Equal(AlertStyle.Following, request.Style);
+        Assert.Equal(AlertIcon.None, request.EffectiveIcon);
+        Assert.Equal(6000, request.DurationMs);
+    }
+
+    [Fact]
     public void ReloadSupportsAlertKindAndDurationArguments()
     {
         var presenter = new CapturingAlertPresenter();
@@ -875,6 +890,31 @@ public sealed class ScriptRuntimeTests
                 Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
             });
         Assert.True(Assert.Single(timers.Timers).IsDisposed);
+    }
+
+    [Fact]
+    public void OperationToastHideTargetsItsFollowingStyleChannel()
+    {
+        var presenter = new CapturingAlertPresenter();
+        using var runtime = new ScriptRuntime(presenter);
+
+        runtime.Reload("""
+            const toast = hs.alert.operation("Testing", { style: "following", elapsed: false });
+            toast.hide();
+            """);
+
+        Assert.Collection(
+            presenter.Requests,
+            request =>
+            {
+                Assert.Equal(AlertStyle.Following, request.Style);
+                Assert.Equal(60_000, request.DurationMs);
+            },
+            request =>
+            {
+                Assert.Equal(AlertStyle.Following, request.Style);
+                Assert.Equal(0, request.DurationMs);
+            });
     }
 
     [Fact]

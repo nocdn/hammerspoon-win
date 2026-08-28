@@ -14,12 +14,11 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
     private const double HiddenWindowCoordinate = -1_000_000;
 
     private readonly Dispatcher _dispatcher;
-    private readonly Func<IToastView> _createWindow;
+    private readonly Func<AlertStyle, IToastView> _createWindow;
     private readonly Action<IToastView> _positionWindow;
+    private readonly ICursorFollowingToastController _cursorFollower;
     private readonly IRuntimeLogger _logger;
-    private readonly DispatcherTimer _timer;
-    private IToastView? _window;
-    private int _exitGeneration;
+    private readonly Dictionary<AlertStyle, ToastChannel> _channels = [];
     private bool _disposed;
 
     public ToastPresenter()
@@ -38,7 +37,14 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
     }
 
     private ToastPresenter(Dispatcher dispatcher, IRuntimeLogger logger)
-        : this(dispatcher, static () => new ToastWindow(), Position, logger)
+        : this(
+            dispatcher,
+            static style => style is AlertStyle.Following
+                ? new FollowingToastWindow()
+                : new ToastWindow(),
+            Position,
+            new CursorFollowingToastController(),
+            logger)
     {
     }
 
@@ -46,22 +52,36 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         Dispatcher dispatcher,
         Func<IToastView> createWindow,
         Action<IToastView> positionWindow)
-        : this(dispatcher, createWindow, positionWindow, NullRuntimeLogger.Instance)
+        : this(
+            dispatcher,
+            _ => createWindow(),
+            positionWindow,
+            new CursorFollowingToastController(),
+            NullRuntimeLogger.Instance)
     {
     }
 
     internal ToastPresenter(
         Dispatcher dispatcher,
-        Func<IToastView> createWindow,
+        Func<AlertStyle, IToastView> createWindow,
         Action<IToastView> positionWindow,
+        ICursorFollowingToastController cursorFollower)
+        : this(dispatcher, createWindow, positionWindow, cursorFollower, NullRuntimeLogger.Instance)
+    {
+    }
+
+    private ToastPresenter(
+        Dispatcher dispatcher,
+        Func<AlertStyle, IToastView> createWindow,
+        Action<IToastView> positionWindow,
+        ICursorFollowingToastController cursorFollower,
         IRuntimeLogger logger)
     {
         _dispatcher = dispatcher;
         _createWindow = createWindow;
         _positionWindow = positionWindow;
+        _cursorFollower = cursorFollower;
         _logger = logger;
-        _timer = new DispatcherTimer(DispatcherPriority.Normal, _dispatcher);
-        _timer.Tick += HideTimerTick;
     }
 
     public void Show(AlertRequest request)
@@ -76,7 +96,7 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         }
 
         var queuedAt = Stopwatch.GetTimestamp();
-        _logger.Info($"Toast show queued text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' durationMs={request.DurationMs}.");
+        _logger.Info($"Toast show queued text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' style='{request.Style}' durationMs={request.DurationMs}.");
         _dispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
@@ -119,17 +139,18 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
     private void ShowOnDispatcher(AlertRequest request)
     {
         var startedAt = Stopwatch.GetTimestamp();
-        StopTimer();
+        var channel = GetOrCreateChannel(request.Style);
+        StopTimer(channel);
 
         if (request.DurationMs == 0)
         {
-            HideCurrentToast();
+            HideChannel(channel);
             _logger.Info($"Toast hide timing text='{FormatTextForLog(request.Text)}' totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
             return;
         }
 
-        var window = _window ??= _createWindow();
-        CancelExitAndReset(window);
+        var window = GetOrCreateWindow(channel);
+        CancelExitAndReset(channel, window);
 
         var wasOnScreen = !IsHiddenOffscreen(window);
         if (!wasOnScreen)
@@ -150,12 +171,20 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
 
         window.UpdateLayout();
         var layoutAt = Stopwatch.GetTimestamp();
-        _positionWindow(window);
+        if (request.Style is AlertStyle.Following)
+        {
+            _cursorFollower.Start(window);
+        }
+        else
+        {
+            _positionWindow(window);
+        }
         var positionedAt = Stopwatch.GetTimestamp();
-        StartTimer(request.DurationMs);
+        window.BeginEnterAnimation();
+        StartTimer(channel, request.DurationMs);
 
         _logger.Info(
-            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' alreadyVisible={wasVisible} wasOnScreen={wasOnScreen} " +
+            $"Toast show timing text='{FormatTextForLog(request.Text)}' kind='{request.Kind}' icon='{request.EffectiveIcon}' style='{request.Style}' alreadyVisible={wasVisible} wasOnScreen={wasOnScreen} size={window.ActualWidth:F1}x{window.ActualHeight:F1} " +
             $"moveMs={ElapsedMs(startedAt, movedAt):F3} updateMs={ElapsedMs(movedAt, updatedAt):F3} " +
             $"showMs={ElapsedMs(updatedAt, shownAt):F3} layoutMs={ElapsedMs(shownAt, layoutAt):F3} " +
             $"positionMs={ElapsedMs(layoutAt, positionedAt):F3} totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
@@ -168,39 +197,50 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
             return;
         }
 
-        StopTimer();
-        if (_window is not null)
+        foreach (var channel in _channels.Values)
         {
-            _exitGeneration++;
-            _window.CancelExitAnimation();
-            _window.Close();
+            StopTimer(channel);
         }
 
-        _window = null;
-        _timer.Tick -= HideTimerTick;
+        _cursorFollower.Dispose();
+        foreach (var channel in _channels.Values)
+        {
+            channel.ExitGeneration++;
+            if (channel.Window is not null)
+            {
+                channel.Window.CancelExitAnimation();
+                channel.Window.Close();
+            }
+
+            channel.Dispose();
+        }
+
+        _channels.Clear();
         _disposed = true;
     }
 
-    private void HideCurrentToast()
+    private void HideChannel(ToastChannel channel)
     {
-        StopTimer();
-        if (_window is null)
+        StopTimer(channel);
+        var window = channel.Window;
+        if (window is null)
         {
             return;
         }
 
-        if (IsHiddenOffscreen(_window))
+        if (IsHiddenOffscreen(window))
         {
-            CancelExitAndReset(_window);
-            MoveOffscreen(_window);
+            CancelExitAndReset(channel, window);
+            MoveOffscreen(window);
+            StopFollowerIfNeeded(channel);
             return;
         }
 
-        var window = _window;
-        var generation = ++_exitGeneration;
+        var generation = ++channel.ExitGeneration;
+        StopFollowerIfNeeded(channel);
         window.BeginExitAnimation(() =>
         {
-            if (_disposed || !ReferenceEquals(_window, window) || generation != _exitGeneration)
+            if (_disposed || !ReferenceEquals(channel.Window, window) || generation != channel.ExitGeneration)
             {
                 return;
             }
@@ -210,9 +250,9 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         });
     }
 
-    private void CancelExitAndReset(IToastView window)
+    private static void CancelExitAndReset(ToastChannel channel, IToastView window)
     {
-        _exitGeneration++;
+        channel.ExitGeneration++;
         window.CancelExitAnimation();
         window.PrepareForShow();
     }
@@ -221,31 +261,29 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         Math.Abs(window.Left - HiddenWindowCoordinate) < 0.5
         && Math.Abs(window.Top - HiddenWindowCoordinate) < 0.5;
 
-    private void HideTimerTick(object? sender, EventArgs e)
+    private static void StopTimer(ToastChannel channel)
     {
-        HideCurrentToast();
+        channel.Timer.Stop();
     }
 
-    private void StopTimer()
+    private static void StartTimer(ToastChannel channel, int durationMs)
     {
-        _timer.Stop();
-    }
-
-    private void StartTimer(int durationMs)
-    {
-        _timer.Interval = TimeSpan.FromMilliseconds(durationMs);
-        _timer.Start();
+        channel.Timer.Interval = TimeSpan.FromMilliseconds(durationMs);
+        channel.Timer.Start();
     }
 
     private void PrewarmOnDispatcher()
     {
-        if (_disposed || _window is not null)
+        if (_disposed
+            || (_channels.TryGetValue(AlertStyle.Standard, out var existingChannel)
+                && existingChannel.Window is not null))
         {
             return;
         }
 
         var startedAt = Stopwatch.GetTimestamp();
-        var window = _window = _createWindow();
+        var channel = GetOrCreateChannel(AlertStyle.Standard);
+        var window = GetOrCreateWindow(channel);
         var createdAt = Stopwatch.GetTimestamp();
         MoveOffscreen(window);
         window.UpdateRequest(AlertRequest.Create("Ready", AlertKind.Normal, 1));
@@ -259,6 +297,40 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
         _logger.Info(
             $"Toast prewarm timing createMs={ElapsedMs(startedAt, createdAt):F3} updateMs={ElapsedMs(createdAt, updatedAt):F3} " +
             $"showMs={ElapsedMs(updatedAt, shownAt):F3} layoutMs={ElapsedMs(shownAt, finishedAt):F3} totalMs={Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F3}.");
+    }
+
+    private ToastChannel GetOrCreateChannel(AlertStyle style)
+    {
+        if (_channels.TryGetValue(style, out var channel))
+        {
+            return channel;
+        }
+
+        channel = new ToastChannel(
+            style,
+            _dispatcher,
+            timerChannel =>
+            {
+                if (!_disposed)
+                {
+                    HideChannel(timerChannel);
+                }
+            });
+        _channels.Add(style, channel);
+        return channel;
+    }
+
+    private IToastView GetOrCreateWindow(ToastChannel channel)
+    {
+        return channel.Window ??= _createWindow(channel.Style);
+    }
+
+    private void StopFollowerIfNeeded(ToastChannel channel)
+    {
+        if (channel.Style is AlertStyle.Following)
+        {
+            _cursorFollower.Stop();
+        }
     }
 
     private static void MoveOffscreen(IToastView window)
@@ -294,5 +366,35 @@ internal sealed class ToastPresenter : IAlertPresenter, IDisposable
             .Replace("'", "\\'", StringComparison.Ordinal)
             .Replace("\r", "\\r", StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal);
+    }
+
+    private sealed class ToastChannel : IDisposable
+    {
+        private readonly EventHandler _timerTick;
+
+        public ToastChannel(
+            AlertStyle style,
+            Dispatcher dispatcher,
+            Action<ToastChannel> onTimerTick)
+        {
+            Style = style;
+            Timer = new DispatcherTimer(DispatcherPriority.Normal, dispatcher);
+            _timerTick = (_, _) => onTimerTick(this);
+            Timer.Tick += _timerTick;
+        }
+
+        public AlertStyle Style { get; }
+
+        public DispatcherTimer Timer { get; }
+
+        public IToastView? Window { get; set; }
+
+        public int ExitGeneration { get; set; }
+
+        public void Dispose()
+        {
+            Timer.Stop();
+            Timer.Tick -= _timerTick;
+        }
     }
 }

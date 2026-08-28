@@ -36,6 +36,8 @@ internal interface IToastView
 
     void UpdateRequest(AlertRequest request);
 
+    void BeginEnterAnimation();
+
     void BeginExitAnimation(Action onComplete);
 
     void CancelExitAnimation();
@@ -112,6 +114,10 @@ internal sealed class ToastWindow : Window, IToastView
     }
 
     public Visual PlacementVisual => this;
+
+    public void BeginEnterAnimation()
+    {
+    }
 
     public void BeginExitAnimation(Action onComplete) => _exitAnimator.Begin(onComplete);
 

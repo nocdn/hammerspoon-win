@@ -6,12 +6,17 @@ public sealed record AlertRequest(string Text, AlertKind Kind, int DurationMs)
 {
     public const AlertKind DefaultKind = AlertKind.Success;
     public const AlertIcon DefaultIcon = AlertIcon.Auto;
+    public const AlertStyle DefaultStyle = AlertStyle.Standard;
     public const int DefaultDurationMs = 2000;
 
     public AlertIcon Icon { get; init; } = DefaultIcon;
 
+    public AlertStyle Style { get; init; } = DefaultStyle;
+
     public AlertIcon EffectiveIcon =>
-        Icon is AlertIcon.Auto
+        Style is AlertStyle.Following
+            ? AlertIcon.None
+            : Icon is AlertIcon.Auto
             ? Kind is AlertKind.Normal ? AlertIcon.None : AlertIcon.Dot
             : Icon;
 
@@ -19,7 +24,8 @@ public sealed record AlertRequest(string Text, AlertKind Kind, int DurationMs)
         string? text,
         AlertKind? kind = null,
         int? durationMs = null,
-        AlertIcon? icon = null)
+        AlertIcon? icon = null,
+        AlertStyle? style = null)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -34,7 +40,8 @@ public sealed record AlertRequest(string Text, AlertKind Kind, int DurationMs)
 
         return new AlertRequest(text, kind ?? DefaultKind, normalizedDurationMs)
         {
-            Icon = icon ?? DefaultIcon
+            Icon = icon ?? DefaultIcon,
+            Style = style ?? DefaultStyle
         };
     }
 
@@ -71,6 +78,23 @@ public sealed record AlertRequest(string Text, AlertKind Kind, int DurationMs)
             "loader" or "loading" or "spinner" or "progress" or "busy" => AlertIcon.Loader,
             _ => throw new ArgumentException(
                 string.Create(CultureInfo.InvariantCulture, $"Unknown alert icon '{value}'. Use auto, none, dot, or loader."),
+                nameof(value))
+        };
+    }
+
+    public static AlertStyle ParseStyle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultStyle;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "standard" or "default" or "normal" => AlertStyle.Standard,
+            "following" or "follow" or "cursor" or "cursor-following" => AlertStyle.Following,
+            _ => throw new ArgumentException(
+                string.Create(CultureInfo.InvariantCulture, $"Unknown alert style '{value}'. Use standard or following."),
                 nameof(value))
         };
     }

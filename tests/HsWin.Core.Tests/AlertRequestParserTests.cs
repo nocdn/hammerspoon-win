@@ -13,6 +13,7 @@ public sealed class AlertRequestParserTests
         Assert.Equal(AlertKind.Success, request.Kind);
         Assert.Equal(AlertIcon.Auto, request.Icon);
         Assert.Equal(AlertIcon.Dot, request.EffectiveIcon);
+        Assert.Equal(AlertStyle.Standard, request.Style);
         Assert.Equal(2000, request.DurationMs);
     }
 
@@ -95,6 +96,39 @@ public sealed class AlertRequestParserTests
     }
 
     [Fact]
+    public void FromScriptArgumentsReadsFollowingStyleAsTextOnlyPill()
+    {
+        var request = AlertRequestParser.FromScriptArguments(
+            "Testing",
+            new Dictionary<string, object?>
+            {
+                ["style"] = "following",
+                ["type"] = "success",
+                ["icon"] = "loader",
+                ["durationMs"] = 6000
+            });
+
+        Assert.Equal(AlertStyle.Following, request.Style);
+        Assert.Equal(AlertIcon.Loader, request.Icon);
+        Assert.Equal(AlertIcon.None, request.EffectiveIcon);
+        Assert.Equal(6000, request.DurationMs);
+    }
+
+    [Theory]
+    [InlineData("following")]
+    [InlineData("follow")]
+    [InlineData("cursor")]
+    [InlineData("cursor-following")]
+    public void FromScriptArgumentsAcceptsFollowingStyleAliases(string style)
+    {
+        var request = AlertRequestParser.FromScriptArguments(
+            "Testing",
+            new Dictionary<string, object?> { ["variant"] = style });
+
+        Assert.Equal(AlertStyle.Following, request.Style);
+    }
+
+    [Fact]
     public void FromScriptArgumentsLetsExplicitDurationOverrideOptionsObject()
     {
         var request = AlertRequestParser.FromScriptArguments(
@@ -131,6 +165,20 @@ public sealed class AlertRequestParserTests
                 }));
 
         Assert.Contains("Unknown alert icon", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromScriptArgumentsRejectsUnknownStyle()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            AlertRequestParser.FromScriptArguments(
+                "Saved",
+                new Dictionary<string, object?>
+                {
+                    ["style"] = "floating"
+                }));
+
+        Assert.Contains("Unknown alert style", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

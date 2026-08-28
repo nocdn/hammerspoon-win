@@ -570,7 +570,7 @@
 
       hide() {
         api.dispose();
-        host.Alerts.Show("Hidden", { durationMs: 0 });
+        host.Alerts.Show("Hidden", { ...currentOptions, durationMs: 0 });
       },
 
       stop() {

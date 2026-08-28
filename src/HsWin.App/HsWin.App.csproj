@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Resource Include="Assets\Fonts\SF-Pro-Text-Regular.otf" />
+    <Resource Include="Assets\Fonts\SF-Pro-Rounded-Medium.otf" />
   </ItemGroup>
 
   <ItemGroup>

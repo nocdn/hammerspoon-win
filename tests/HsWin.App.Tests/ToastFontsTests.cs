@@ -11,4 +11,14 @@ public sealed class ToastFontsTests
             ToastFonts.TextFontFamily.Source,
             StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void FollowingToastFontUsesEmbeddedSfProRoundedMedium()
+    {
+        Assert.Equal("SF Pro Rounded", ToastFonts.RoundedFamilyName);
+        Assert.Contains(
+            ToastFonts.RoundedMediumResourcePath,
+            ToastFonts.RoundedMediumFontFamily.Source,
+            StringComparison.Ordinal);
+    }
 }

@@ -61,15 +61,18 @@ hs.alert.show("Something failed", { type: "error", durationMs: 4000 });
 hs.alert.show("Plain message", { type: "normal", durationMs: 1500 });
 hs.alert.show("Working", { type: "normal", loading: true, durationMs: 60000 });
 hs.alert.show("Still working", { type: "normal", icon: "loader", durationMs: 60000 });
+hs.alert.show("Testing", { style: "following", durationMs: 6000 });
 ```
 
-Defaults when omitted: `type` is `success`, `durationMs` is `2000`.
+Defaults when omitted: `type` is `success`, `style` is `standard`, and `durationMs` is `2000`.
 
 Object options accept `type`/`kind`/`state`/`status` and `durationMs`/`duration`. Types are `normal`, `success`, and `error`; aliases include `none`, `plain`, `info`, `ok`, `done`, `fail`, `failure`, and `failed`.
 
 Object options also accept `icon`/`indicator` and `loading`/`loader`/`spinner`. Icons are `auto`, `none`, `dot`, and `loader`; aliases include `default`, `status`, `loading`, `spinner`, `progress`, and `busy`. `loading: true` is a shortcut for `icon: "loader"`, while `loading: false` returns to automatic icon behavior. Automatic icons show no icon for `normal` toasts and a green/red dot for `success`/`error` toasts.
 
-The app prewarms the toast window at startup and keeps it alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping the WPF window. Toast text uses embedded **SF Pro Text** Regular (see `src/HsWin.App/Assets/Fonts/` and Apple's [SF Pro license](https://developer.apple.com/fonts/)).
+Set `style: "following"` (or the `variant` alias) for a click-through, text-only pill that smoothly follows the cursor. Following aliases are `follow`, `cursor`, and `cursor-following`; use `standard`, `default`, or `normal` to select the normal toast. A following toast displays only `text`—icons and status dots are intentionally suppressed—but still honors `durationMs`. Its 12 pt **SF Pro Rounded Medium** type, 8×4 padding, capsule colors, down-right cursor offset, screen-edge clamping, and 120 ms ease-out / 160 ms ease-in fade are based on Snap's native cursor status pill. Cursor movement uses a slightly quicker 60 ms exponential response on an independent native 240 Hz loop, while standard and following toasts use independent lifecycles, so a standard toast cannot throttle, replace, or dismiss the following pill.
+
+The app prewarms the standard toast window at startup and keeps toast windows alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping WPF windows. Standard toast text uses embedded **SF Pro Text** Regular, while following pills use embedded **SF Pro Rounded Medium** (see `src/HsWin.App/Assets/Fonts/` and Apple's [SF Pro license](https://developer.apple.com/fonts/)).
 
 ### `hs.alert.operation(text, options?)`
 

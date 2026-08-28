@@ -9,15 +9,22 @@ public static class AlertRequestParser
         var message = ScriptArgumentReader.RequireText(text, "text");
         var kind = AlertRequest.DefaultKind;
         var icon = AlertRequest.DefaultIcon;
+        var style = AlertRequest.DefaultStyle;
         int? duration = null;
 
         if (!ScriptArgumentReader.IsMissing(optionsOrKind))
         {
-            if (TryReadOptions(optionsOrKind, out var optionsKind, out var optionsDurationMs, out var optionsIcon))
+            if (TryReadOptions(
+                optionsOrKind,
+                out var optionsKind,
+                out var optionsDurationMs,
+                out var optionsIcon,
+                out var optionsStyle))
             {
                 kind = optionsKind ?? kind;
                 duration = optionsDurationMs;
                 icon = optionsIcon ?? icon;
+                style = optionsStyle ?? style;
             }
             else
             {
@@ -30,14 +37,20 @@ public static class AlertRequestParser
             duration = ConvertToDurationMs(durationMs, "durationMs");
         }
 
-        return AlertRequest.Create(message, kind, duration, icon);
+        return AlertRequest.Create(message, kind, duration, icon, style);
     }
 
-    private static bool TryReadOptions(object? value, out AlertKind? kind, out int? durationMs, out AlertIcon? icon)
+    private static bool TryReadOptions(
+        object? value,
+        out AlertKind? kind,
+        out int? durationMs,
+        out AlertIcon? icon,
+        out AlertStyle? style)
     {
         kind = null;
         durationMs = null;
         icon = null;
+        style = null;
         if (!ScriptArgumentReader.IsOptionsObject(value))
         {
             return false;
@@ -48,6 +61,7 @@ public static class AlertRequestParser
         icon = ReadIcon(
             ScriptArgumentReader.GetPropertyValue(value, "icon", "indicator"),
             ScriptArgumentReader.GetPropertyValue(value, "loading", "loader", "spinner"));
+        style = ReadStyle(ScriptArgumentReader.GetPropertyValue(value, "style", "variant"));
         return true;
     }
 
@@ -76,6 +90,13 @@ public static class AlertRequestParser
         return ScriptArgumentReader.RequireBoolean(loadingValue, "loading")
             ? AlertIcon.Loader
             : AlertIcon.Auto;
+    }
+
+    private static AlertStyle? ReadStyle(object? value)
+    {
+        return ScriptArgumentReader.IsMissing(value)
+            ? null
+            : AlertRequest.ParseStyle(ScriptArgumentReader.RequireText(value, "style"));
     }
 
     private static int ConvertToDurationMs(object? value, string argumentName)

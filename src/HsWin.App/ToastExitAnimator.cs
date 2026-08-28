@@ -14,6 +14,8 @@ internal sealed class ToastExitAnimator
     private readonly BlurEffect _blur;
     private readonly TimeSpan _duration;
     private readonly double _exitBlurRadius;
+    private readonly IEasingFunction _opacityEasingFunction;
+    private readonly IEasingFunction _blurEasingFunction;
     private int _generation;
 
     public ToastExitAnimator(UIElement target, BlurEffect blur)
@@ -25,12 +27,21 @@ internal sealed class ToastExitAnimator
     {
     }
 
-    internal ToastExitAnimator(UIElement target, BlurEffect blur, TimeSpan duration, double exitBlurRadius)
+    internal ToastExitAnimator(
+        UIElement target,
+        BlurEffect blur,
+        TimeSpan duration,
+        double exitBlurRadius,
+        IEasingFunction? opacityEasingFunction = null,
+        IEasingFunction? blurEasingFunction = null)
     {
         _target = target;
         _blur = blur;
         _duration = duration;
         _exitBlurRadius = exitBlurRadius;
+        _opacityEasingFunction = opacityEasingFunction
+            ?? new CubicEase { EasingMode = EasingMode.EaseIn };
+        _blurEasingFunction = blurEasingFunction ?? _opacityEasingFunction;
     }
 
     public void PrepareForShow()
@@ -51,18 +62,17 @@ internal sealed class ToastExitAnimator
         ArgumentNullException.ThrowIfNull(onComplete);
         Cancel();
 
-        var easing = new CubicEase { EasingMode = EasingMode.EaseIn };
         var generation = ++_generation;
 
         var opacityAnimation = new DoubleAnimation(1, 0, _duration)
         {
-            EasingFunction = easing,
+            EasingFunction = _opacityEasingFunction,
         };
         opacityAnimation.Completed += OnCompleted;
 
         var blurAnimation = new DoubleAnimation(0, _exitBlurRadius, _duration)
         {
-            EasingFunction = easing,
+            EasingFunction = _blurEasingFunction,
         };
 
         _target.BeginAnimation(UIElement.OpacityProperty, opacityAnimation);
