@@ -35,7 +35,7 @@ internal sealed partial class FollowingToastWindow : IToastView, INativeCursorFo
     {
         _text = new TextBlock
         {
-            FontFamily = ToastFonts.RoundedMediumFontFamily,
+            FontFamily = ToastFonts.MediumFontFamily,
             FontSize = FollowingToastStyleMetrics.TextFontSize,
             FontWeight = FollowingToastStyleMetrics.TextFontWeight,
             Foreground = TextBrush,

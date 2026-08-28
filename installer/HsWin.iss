@@ -1,6 +1,6 @@
 #define MyAppName "Hammerspoon (Windows Edition)"
 #define MyAppPublisher "Hammerspoon"
-#define MyAppUrl "https://github.com"
+#define MyAppUrl "https://github.com/nocdn/hammerspoon-win"
 #define MyAppExeName "Hammerspoon (Windows Edition).exe"
 #define MyInstallFolderName "Hammerspoon (Windows Edition)"
 #define MyAppVersion GetEnv("HSWIN_VERSION")

@@ -3,22 +3,22 @@ namespace HsWin.App.Tests;
 public sealed class ToastFontsTests
 {
     [Fact]
-    public void ToastTextFontUsesEmbeddedSfProTextRegular()
+    public void ToastTextFontUsesEmbeddedInterRegular()
     {
-        Assert.Equal("SF Pro Text", ToastFonts.TextFamilyName);
+        Assert.Equal("Inter", ToastFonts.FamilyName);
         Assert.Contains(
-            ToastFonts.TextRegularResourcePath,
-            ToastFonts.TextFontFamily.Source,
+            ToastFonts.RegularResourcePath,
+            ToastFonts.RegularFontFamily.Source,
             StringComparison.Ordinal);
     }
 
     [Fact]
-    public void FollowingToastFontUsesEmbeddedSfProRoundedMedium()
+    public void FollowingToastFontUsesEmbeddedInterMedium()
     {
-        Assert.Equal("SF Pro Rounded", ToastFonts.RoundedFamilyName);
+        Assert.Equal("Inter", ToastFonts.FamilyName);
         Assert.Contains(
-            ToastFonts.RoundedMediumResourcePath,
-            ToastFonts.RoundedMediumFontFamily.Source,
+            ToastFonts.MediumResourcePath,
+            ToastFonts.MediumFontFamily.Source,
             StringComparison.Ordinal);
     }
 }

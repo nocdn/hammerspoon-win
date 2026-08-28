@@ -70,9 +70,9 @@ Object options accept `type`/`kind`/`state`/`status` and `durationMs`/`duration`
 
 Object options also accept `icon`/`indicator` and `loading`/`loader`/`spinner`. Icons are `auto`, `none`, `dot`, and `loader`; aliases include `default`, `status`, `loading`, `spinner`, `progress`, and `busy`. `loading: true` is a shortcut for `icon: "loader"`, while `loading: false` returns to automatic icon behavior. Automatic icons show no icon for `normal` toasts and a green/red dot for `success`/`error` toasts.
 
-Set `style: "following"` (or the `variant` alias) for a click-through, text-only pill that smoothly follows the cursor. Following aliases are `follow`, `cursor`, and `cursor-following`; use `standard`, `default`, or `normal` to select the normal toast. A following toast displays only `text`—icons and status dots are intentionally suppressed—but still honors `durationMs`. Its 12 pt **SF Pro Rounded Medium** type, 8×4 padding, capsule colors, down-right cursor offset, screen-edge clamping, and 120 ms ease-out / 160 ms ease-in fade are based on Snap's native cursor status pill. Cursor movement uses a slightly quicker 60 ms exponential response on an independent native 240 Hz loop, while standard and following toasts use independent lifecycles, so a standard toast cannot throttle, replace, or dismiss the following pill.
+Set `style: "following"` (or the `variant` alias) for a click-through, text-only pill that smoothly follows the cursor. Following aliases are `follow`, `cursor`, and `cursor-following`; use `standard`, `default`, or `normal` to select the normal toast. A following toast displays only `text`—icons and status dots are intentionally suppressed—but still honors `durationMs`. Its 12 pt **Inter Medium** type, 8×4 padding, capsule colors, down-right cursor offset, screen-edge clamping, and 120 ms ease-out / 160 ms ease-in fade are based on Snap's native cursor status pill. Cursor movement uses a slightly quicker 60 ms exponential response on an independent native 240 Hz loop, while standard and following toasts use independent lifecycles, so a standard toast cannot throttle, replace, or dismiss the following pill.
 
-The app prewarms the standard toast window at startup and keeps toast windows alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping WPF windows. Standard toast text uses embedded **SF Pro Text** Regular, while following pills use embedded **SF Pro Rounded Medium** (see `src/HsWin.App/Assets/Fonts/` and Apple's [SF Pro license](https://developer.apple.com/fonts/)).
+The app prewarms the standard toast window at startup and keeps toast windows alive offscreen between alerts, so repeated hotkey feedback avoids recreating or remapping WPF windows. Standard toast text uses embedded **Inter Regular**, while following pills use embedded **Inter Medium**. Inter is distributed under the SIL Open Font License 1.1; see `src/HsWin.App/Assets/Fonts/LICENSE.txt`.
 
 ### `hs.alert.operation(text, options?)`
 
@@ -900,3 +900,21 @@ The installer is built with Inno Setup and written to `artifacts\installer\hswin
 ## Releases
 
 The GitHub Actions release workflow runs on `main` pushes and manual dispatches. It builds and tests on Windows, compiles the Inno Setup installer, uploads the installer as a workflow artifact, and publishes a normal GitHub release tagged with the workflow run number.
+
+Each release also generates the three versioned manifests required for the Windows Package Manager community repository, hashes the exact release installer, and attaches `winget-manifests-v<version>.zip` to the release. See [WinGet packaging](packaging/winget/README.md) for first-submission, local-test, and update instructions. Once the initial package is accepted, users can install it with `winget install --exact --id nocdn.HammerspoonWindows`.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- **Authors and committers:** [Bartosz Bak (@nocdn)](https://github.com/nocdn)
+- **Reviewers:** [Bartosz Bak (@nocdn)](https://github.com/nocdn). Contributions from anyone without direct commit access must be reviewed before they are merged.
+- **Approvers:** [Bartosz Bak (@nocdn)](https://github.com/nocdn). Every release signing request requires manual approval.
+
+All members assigned to these roles must use multi-factor authentication for GitHub and SignPath. Official release binaries must be produced from this repository by the GitHub Actions release workflow. The project signs only its own binaries; bundled upstream dependencies retain their original signatures or remain unsigned and are not re-signed as project code. Product and version metadata must match across every binary in a signed release.
+
+See the [privacy policy](PRIVACY.md). This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+## License
+
+Hammerspoon (Windows Edition) is available under the [MIT License](LICENSE). The bundled [Inter](https://github.com/rsms/inter) fonts are available under the SIL Open Font License 1.1 in `src/HsWin.App/Assets/Fonts/LICENSE.txt`. Third-party dependencies remain under their respective licenses.

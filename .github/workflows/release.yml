@@ -54,11 +54,36 @@ jobs:
           "path=$($installerPath.Path)" >> $env:GITHUB_OUTPUT
           "name=$installerName" >> $env:GITHUB_OUTPUT
 
+      - name: Build WinGet manifests
+        id: winget
+        shell: pwsh
+        run: |
+          $installerUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/${{ steps.installer.outputs.name }}"
+          $manifestPath = .\scripts\Build-WinGetManifests.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -InstallerPath "${{ steps.installer.outputs.path }}" `
+            -InstallerUrl $installerUrl
+          $archivePath = Join-Path (Resolve-Path ".\artifacts").Path "winget-manifests-$env:RELEASE_TAG.zip"
+          Compress-Archive -LiteralPath (Resolve-Path ".\artifacts\winget\manifests").Path `
+            -DestinationPath $archivePath `
+            -Force
+          "path=$manifestPath" >> $env:GITHUB_OUTPUT
+          "archive=$archivePath" >> $env:GITHUB_OUTPUT
+          "archiveName=$(Split-Path -Leaf $archivePath)" >> $env:GITHUB_OUTPUT
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.installer.outputs.name }}
           path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload WinGet manifest artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: winget-manifests-${{ env.RELEASE_TAG }}
+          path: ${{ steps.winget.outputs.path }}
           if-no-files-found: error
           retention-days: 30
 
@@ -72,10 +97,13 @@ jobs:
 
           Commit: $env:GITHUB_SHA
           Installer: ${{ steps.installer.outputs.name }}
+          WinGet manifests: ${{ steps.winget.outputs.archiveName }}
+          Code signing policy: https://github.com/$env:GITHUB_REPOSITORY#code-signing-policy
           "@
 
           gh release create $env:RELEASE_TAG `
             "${{ steps.installer.outputs.path }}" `
+            "${{ steps.winget.outputs.archive }}" `
             --title "Hammerspoon (Windows Edition) v$env:RELEASE_VERSION" `
             --notes $notes `
             --target $env:GITHUB_SHA `

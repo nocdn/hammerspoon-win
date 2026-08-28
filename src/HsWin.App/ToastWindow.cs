@@ -252,7 +252,7 @@ internal sealed class ToastWindow : Window, IToastView
     {
         return new()
         {
-            FontFamily = ToastFonts.TextFontFamily,
+            FontFamily = ToastFonts.RegularFontFamily,
             FontSize = ToastStyleMetrics.TextFontSize,
             FontWeight = ToastStyleMetrics.TextFontWeight,
             Foreground = TextBrush,

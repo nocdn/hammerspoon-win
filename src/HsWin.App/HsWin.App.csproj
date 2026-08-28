@@ -5,8 +5,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\Fonts\SF-Pro-Text-Regular.otf" />
-    <Resource Include="Assets\Fonts\SF-Pro-Rounded-Medium.otf" />
+    <Resource Include="Assets\Fonts\Inter-Regular.ttf" />
+    <Resource Include="Assets\Fonts\Inter-Medium.ttf" />
+    <None Include="..\..\LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Assets\Fonts\LICENSE.txt" TargetPath="LICENSE-Inter.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
