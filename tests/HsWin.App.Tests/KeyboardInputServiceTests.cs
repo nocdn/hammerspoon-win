@@ -3,6 +3,7 @@ using HsWin.App.Keyboard;
 using HsWin.Core.Hotkeys;
 using HsWin.Core.Keyboard;
 using HsWin.Core.Logging;
+using System.Runtime.ExceptionServices;
 
 namespace HsWin.App.Tests;
 
@@ -78,7 +79,7 @@ public sealed class KeyboardInputServiceTests
     }
 
     [Fact]
-    public async Task TapFromAnotherThreadDuringKeyboardHookDispatchSendsImmediately()
+    public void TapFromAnotherThreadDuringKeyboardHookDispatchSendsImmediately()
     {
         // The dispatch scope is local to the hook thread by design: only input sent
         // synchronously by the hook dispatch itself (remaps) is deferred. Script callbacks
@@ -86,6 +87,9 @@ public sealed class KeyboardInputServiceTests
         var logger = new CapturingRuntimeLogger();
         var sender = new CapturingKeyboardInputSender();
         var service = new KeyboardInputService(logger, sender);
+        var scopeThreadId = Environment.CurrentManagedThreadId;
+        var workerThreadId = scopeThreadId;
+        ExceptionDispatchInfo? workerFailure = null;
 
         using (KeyboardHookDispatchScope.Enter(
                    logger,
@@ -94,8 +98,28 @@ public sealed class KeyboardInputServiceTests
                    flags: 0,
                    message: 0x0100))
         {
-            await Task.Run(() => service.Tap(0x24, KeyboardTapOptions.Default));
+            var worker = new Thread(() =>
+            {
+                try
+                {
+                    workerThreadId = Environment.CurrentManagedThreadId;
+                    service.Tap(0x24, KeyboardTapOptions.Default);
+                }
+                catch (Exception exception)
+                {
+                    workerFailure = ExceptionDispatchInfo.Capture(exception);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "Keyboard input cross-thread test"
+            };
+            worker.Start();
 
+            Assert.True(worker.Join(TimeSpan.FromSeconds(2)), "Dedicated keyboard-input thread did not finish.");
+            workerFailure?.Throw();
+
+            Assert.NotEqual(scopeThreadId, workerThreadId);
             var action = Assert.Single(sender.Actions);
             Assert.Equal("tap:0x24:sendInput", action);
             Assert.DoesNotContain(
