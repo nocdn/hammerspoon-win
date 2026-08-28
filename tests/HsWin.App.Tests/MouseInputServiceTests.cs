@@ -54,14 +54,21 @@ public sealed class MouseInputServiceTests
     public void SetIntervalMsChangesRateWithoutReplacingTheSession()
     {
         var sender = new CapturingMouseInputSender();
-        var service = new MouseInputService(NullRuntimeLogger.Instance, sender);
+        var timers = new CapturingMouseRepeatTimerFactory();
+        var service = new MouseInputService(NullRuntimeLogger.Instance, sender, timers);
 
         using var repeat = service.Repeat(MouseButton.Right, new MouseRepeatOptions(20));
         Assert.Equal(20, repeat.IntervalMs);
+        Assert.Equal((20, 20), timers.Timer.LastSchedule);
 
         repeat.SetIntervalMs(5);
         Assert.Equal(5, repeat.IntervalMs);
-        Assert.True(sender.WaitForClickCount(3, TimeSpan.FromSeconds(2)));
+        Assert.Equal((5, 5), timers.Timer.LastSchedule);
+
+        timers.Timer.Fire();
+        timers.Timer.Fire();
+
+        Assert.Equal(3, sender.Clicks.Count);
     }
 
     [Fact]
@@ -119,6 +126,38 @@ public sealed class MouseInputServiceTests
             }
 
             return false;
+        }
+    }
+
+    private sealed class CapturingMouseRepeatTimerFactory : IMouseRepeatTimerFactory
+    {
+        public CapturingMouseRepeatTimer Timer { get; } = new();
+
+        public IMouseRepeatTimer Create(Action tick)
+        {
+            Timer.Tick = tick;
+            return Timer;
+        }
+    }
+
+    private sealed class CapturingMouseRepeatTimer : IMouseRepeatTimer
+    {
+        public Action? Tick { get; set; }
+
+        public (int DueTimeMs, int PeriodMs) LastSchedule { get; private set; }
+
+        public void Change(int dueTimeMs, int periodMs)
+        {
+            LastSchedule = (dueTimeMs, periodMs);
+        }
+
+        public void Fire()
+        {
+            Assert.IsType<Action>(Tick)();
+        }
+
+        public void Dispose()
+        {
         }
     }
 }

@@ -8,6 +8,7 @@ internal sealed class MouseInputService : IMouseInputService
 {
     private readonly IRuntimeLogger _logger;
     private readonly IMouseInputSender _inputSender;
+    private readonly IMouseRepeatTimerFactory _timerFactory;
     private readonly object _repeatStartGate = new();
     private readonly object _repeatGate = new();
     private MouseRepeatHandle? _activeRepeat;
@@ -18,9 +19,18 @@ internal sealed class MouseInputService : IMouseInputService
     }
 
     internal MouseInputService(IRuntimeLogger logger, IMouseInputSender inputSender)
+        : this(logger, inputSender, SystemMouseRepeatTimerFactory.Instance)
+    {
+    }
+
+    internal MouseInputService(
+        IRuntimeLogger logger,
+        IMouseInputSender inputSender,
+        IMouseRepeatTimerFactory timerFactory)
     {
         _logger = logger;
         _inputSender = inputSender;
+        _timerFactory = timerFactory;
     }
 
     public void Click(MouseButton button)
@@ -47,7 +57,13 @@ internal sealed class MouseInputService : IMouseInputService
                 previousRepeat.Dispose();
             }
 
-            var repeater = new MouseRepeatHandle(button, options, _logger, _inputSender, ClearActiveRepeat);
+            var repeater = new MouseRepeatHandle(
+                button,
+                options,
+                _logger,
+                _inputSender,
+                _timerFactory,
+                ClearActiveRepeat);
             lock (_repeatGate)
             {
                 _activeRepeat = repeater;
@@ -104,7 +120,7 @@ internal sealed class MouseInputService : IMouseInputService
         private readonly Action<MouseRepeatHandle> _clearActiveRepeat;
         private readonly object _gate = new();
         private readonly Stopwatch _stopwatch = new();
-        private readonly System.Threading.Timer _timer;
+        private readonly IMouseRepeatTimer _timer;
 
         private MouseInputMethod _inputMethod;
         private int _intervalMs;
@@ -117,6 +133,7 @@ internal sealed class MouseInputService : IMouseInputService
             MouseRepeatOptions options,
             IRuntimeLogger logger,
             IMouseInputSender inputSender,
+            IMouseRepeatTimerFactory timerFactory,
             Action<MouseRepeatHandle> clearActiveRepeat)
         {
             _button = button;
@@ -125,7 +142,7 @@ internal sealed class MouseInputService : IMouseInputService
             _logger = logger;
             _inputSender = inputSender;
             _clearActiveRepeat = clearActiveRepeat;
-            _timer = new System.Threading.Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
+            _timer = timerFactory.Create(Tick);
         }
 
         public int IntervalMs
